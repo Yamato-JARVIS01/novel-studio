@@ -41,6 +41,45 @@ export interface LintConfig {
   check_duplicate_punctuation: boolean;
 }
 
+export interface FileNode {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  extension?: string;
+  children?: FileNode[];
+  status?: string;
+}
+
+export interface GitStatusInfo {
+  current_branch: string;
+  is_clean: boolean;
+  modified_files: string[];
+  untracked_files: string[];
+}
+
+export interface DiffLine {
+  line_type: 'Context' | 'Addition' | 'Deletion';
+  old_lineno: number | null;
+  new_lineno: number | null;
+  content: string;
+}
+
+export interface DiffHunk {
+  header: string;
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  lines: DiffLine[];
+}
+
+export interface DiffFile {
+  old_path: string | null;
+  new_path: string | null;
+  hunks: DiffHunk[];
+}
+
+// Commands
 export async function pingBackend(): Promise<string> {
   return await invoke<string>('ping_command');
 }
@@ -63,4 +102,40 @@ export async function calculateMetrics(text: string): Promise<ManuscriptMetrics>
 
 export async function lintJapaneseText(text: string, config?: LintConfig): Promise<LintIssue[]> {
   return await invoke<LintIssue[]>('lint_japanese_text_command', { text, config });
+}
+
+export async function openVault(vaultPath: string): Promise<FileNode[]> {
+  return await invoke<FileNode[]>('open_vault', { vaultPath });
+}
+
+export async function readNovelFile(filePath: string): Promise<string> {
+  return await invoke<string>('read_novel_file', { filePath });
+}
+
+export async function saveNovelFile(filePath: string, content: string): Promise<void> {
+  return await invoke<void>('save_novel_file', { filePath, content });
+}
+
+export async function getGitStatus(repoPath: string): Promise<GitStatusInfo> {
+  return await invoke<GitStatusInfo>('git_status', { repoPath });
+}
+
+export async function gitAutoCommit(repoPath: string, message: string): Promise<string> {
+  return await invoke<string>('git_auto_commit', { repoPath, message });
+}
+
+export async function gitCreateShadowBranch(repoPath: string, branchName: string): Promise<void> {
+  return await invoke<void>('git_create_shadow_branch', { repoPath, branchName });
+}
+
+export async function gitGetDiff(repoPath: string, branchName: string): Promise<DiffFile[]> {
+  return await invoke<DiffFile[]>('git_get_diff', { repoPath, branchName });
+}
+
+export async function gitApplyRevision(repoPath: string, branchName: string): Promise<void> {
+  return await invoke<void>('git_apply_revision', { repoPath, branchName });
+}
+
+export async function gitDiscardRevision(repoPath: string, branchName: string): Promise<void> {
+  return await invoke<void>('git_discard_revision', { repoPath, branchName });
 }
