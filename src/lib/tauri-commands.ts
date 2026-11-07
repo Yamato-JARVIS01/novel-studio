@@ -132,6 +132,14 @@ export async function saveNovelFile(filePath: string, content: string): Promise<
   return await invoke<void>('save_novel_file', { filePath, content });
 }
 
+export async function createSampleProject(): Promise<string> {
+  return await invoke<string>('create_sample_project');
+}
+
+export async function createNewEpisode(vaultPath: string, fileName: string): Promise<string> {
+  return await invoke<string>('create_new_episode', { vaultPath, fileName });
+}
+
 export async function getGitStatus(repoPath: string): Promise<GitStatusInfo> {
   return await invoke<GitStatusInfo>('git_status', { repoPath });
 }

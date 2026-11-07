@@ -22,6 +22,8 @@ import {
   gitApplyRevision,
   gitDiscardRevision,
   aiRunRevision,
+  createSampleProject,
+  createNewEpisode,
 } from '../lib/tauri-commands';
 
 interface VaultState {
@@ -30,11 +32,14 @@ interface VaultState {
   activeFilePath: string | null;
   gitStatus: GitStatusInfo | null;
   isLoading: boolean;
+  isSnapshotSaved: boolean;
   setVaultPath: (path: string) => Promise<void>;
+  loadSampleProject: () => Promise<void>;
   refreshFiles: () => Promise<void>;
   refreshGitStatus: () => Promise<void>;
   selectFile: (path: string) => Promise<void>;
-  commitCurrentVault: (message: string) => Promise<void>;
+  addEpisode: (title: string) => Promise<string | null>;
+  snapshotCurrentState: () => Promise<void>;
 }
 
 export const useVaultStore = create<VaultState>((set, get) => ({
@@ -43,6 +48,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   activeFilePath: null,
   gitStatus: null,
   isLoading: false,
+  isSnapshotSaved: false,
 
   setVaultPath: async (path: string) => {
     set({ vaultPath: path, isLoading: true });
@@ -51,7 +57,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       const git = await getGitStatus(path).catch(() => null);
       set({ files, gitStatus: git, isLoading: false });
 
-      // Auto-select first markdown file if available
+      // Auto-select first episode if available
       const findFirst = (nodes: FileNode[]): string | null => {
         for (const n of nodes) {
           if (!n.is_dir) return n.path;
@@ -69,6 +75,17 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       }
     } catch (e) {
       console.error('Failed to open vault:', e);
+      set({ isLoading: false });
+    }
+  },
+
+  loadSampleProject: async () => {
+    set({ isLoading: true });
+    try {
+      const samplePath = await createSampleProject();
+      await get().setVaultPath(samplePath);
+    } catch (e) {
+      console.error('Failed to load sample:', e);
       set({ isLoading: false });
     }
   },
@@ -97,14 +114,37 @@ export const useVaultStore = create<VaultState>((set, get) => ({
 
   selectFile: async (path: string) => {
     set({ activeFilePath: path });
-    useEditorStore.getState().loadFile(path);
+    await useEditorStore.getState().loadFile(path);
   },
 
-  commitCurrentVault: async (message: string) => {
+  addEpisode: async (title: string) => {
+    const { vaultPath, refreshFiles, selectFile } = get();
+    if (!vaultPath) return null;
+    try {
+      const newPath = await createNewEpisode(vaultPath, title);
+      await refreshFiles();
+      await selectFile(newPath);
+      return newPath;
+    } catch (e) {
+      console.error('Failed to add episode:', e);
+      return null;
+    }
+  },
+
+  snapshotCurrentState: async () => {
     const { vaultPath, refreshGitStatus } = get();
     if (!vaultPath) return;
-    await gitAutoCommit(vaultPath, message);
+    const now = new Date();
+    const timeStr = now.toLocaleDateString('ja-JP', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    await gitAutoCommit(vaultPath, `記念保存（${timeStr}）`);
     await refreshGitStatus();
+    set({ isSnapshotSaved: true });
+    setTimeout(() => set({ isSnapshotSaved: false }), 3000);
   },
 }));
 
@@ -115,6 +155,9 @@ interface EditorState {
   isDirty: boolean;
   fontSize: number;
   fontFamily: 'serif' | 'sans';
+  theme: 'warm-dark' | 'cream-sepia';
+  showLineNumbers: boolean;
+  targetCharCount: number;
   metrics: ManuscriptMetrics;
   lintIssues: LintIssue[];
   loadFile: (path: string) => Promise<void>;
@@ -123,6 +166,9 @@ interface EditorState {
   changeStatus: (status: SceneStatus) => Promise<void>;
   setFontSize: (size: number) => void;
   setFontFamily: (family: 'serif' | 'sans') => void;
+  toggleTheme: () => void;
+  toggleLineNumbers: () => void;
+  setTargetCharCount: (target: number) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -130,8 +176,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   frontmatter: null,
   body: '',
   isDirty: false,
-  fontSize: 16,
+  fontSize: 17,
   fontFamily: 'serif',
+  theme: 'warm-dark',
+  showLineNumbers: false,
+  targetCharCount: 10000,
   metrics: {
     total_chars: 0,
     chars_without_whitespace: 0,
@@ -194,6 +243,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setFontSize: (fontSize: number) => set({ fontSize }),
   setFontFamily: (fontFamily: 'serif' | 'sans') => set({ fontFamily }),
+  toggleTheme: () => set((state) => ({ theme: state.theme === 'warm-dark' ? 'cream-sepia' : 'warm-dark' })),
+  toggleLineNumbers: () => set((state) => ({ showLineNumbers: !state.showLineNumbers })),
+  setTargetCharCount: (targetCharCount: number) => set({ targetCharCount }),
 }));
 
 interface DiffState {
@@ -263,13 +315,12 @@ export const useAiStore = create<AiState>((set) => ({
     const vaultPath = useVaultStore.getState().vaultPath;
     const activeFile = useVaultStore.getState().activeFilePath;
     if (!vaultPath || !activeFile) {
-      set({ lastError: 'プロジェクトとファイルを選択してください。' });
+      set({ lastError: '本棚とエピソードを選択してください。' });
       return;
     }
 
     set({ isReviewing: true, lastError: null });
 
-    // Retrieve settings from localStorage
     const provider = (localStorage.getItem('novel_studio_provider') || 'gemini') as AiProviderType;
     const apiKey = localStorage.getItem('novel_studio_api_key') || undefined;
     const model = localStorage.getItem('novel_studio_model') || (provider === 'gemini' ? 'gemini-1.5-pro' : 'gpt-4o');
@@ -284,7 +335,6 @@ export const useAiStore = create<AiState>((set) => ({
 
     try {
       const result = await aiRunRevision(vaultPath, activeFile, userPrompt, config);
-      // Auto open diff view
       useDiffStore.setState({
         activeShadowBranch: result.branch_name,
         diffFiles: result.diffs,

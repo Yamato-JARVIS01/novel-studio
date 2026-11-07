@@ -57,3 +57,5 @@
   - Sidebar（Vaultツリー）、Editor（CodeMirror 6 + Inline Diff）、Inspector（原稿用紙換算・リンター結果リアルタイム表示）をZustandで繋ぐ。
 - [x] **Phase 5: AI Engine 統合 (`ai`)**
   - OpenAI互換 / Gemini / Claude のストリーミング通信クライアントと推敲Diff生成パイプラインを接続し、設定ウィザードUIと繋ぐ。
+- [x] **Phase 6: 文芸スタジオUI/UX全面刷新 & オンボーディング**
+  - エンジニア用語の完全排除（Invisible Git・安心の自動バックアップ表示）、ウェルカムオンボーディング画面（ワンクリックサンプル作成）、和紙セピア・ウォームダーク調のCodeMirror 6空間、エピソード直感追加、進捗プログレスバー、AI推敲ガイド親切化を実装。

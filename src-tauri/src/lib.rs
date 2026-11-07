@@ -62,6 +62,17 @@ fn save_novel_file(file_path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn create_sample_project() -> Result<String, String> {
+    StorageManager::create_sample_project().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_new_episode(vault_path: String, file_name: String) -> Result<String, String> {
+    let path = Path::new(&vault_path);
+    StorageManager::create_new_episode(path, &file_name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn git_status(repo_path: String) -> Result<GitStatusInfo, String> {
     let path = Path::new(&repo_path);
     let repo = GitManager::init_or_open(path).map_err(|e| e.to_string())?;
@@ -141,6 +152,8 @@ pub fn run() {
             open_vault,
             read_novel_file,
             save_novel_file,
+            create_sample_project,
+            create_new_episode,
             git_status,
             git_auto_commit,
             git_create_shadow_branch,
