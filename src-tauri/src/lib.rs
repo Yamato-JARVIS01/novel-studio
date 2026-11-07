@@ -7,6 +7,8 @@ use editor_engine::frontmatter::{extract_frontmatter, update_frontmatter, update
 use editor_engine::jp_linter::{calculate_metrics, lint_japanese_text, LintConfig, LintIssue, ManuscriptMetrics};
 use storage::git_manager::{DiffFile, GitManager, GitStatusInfo};
 use storage::{FileNode, StorageManager};
+use ai::provider::AiConfig;
+use ai::pipeline::{AiPipeline, RevisionResult};
 
 #[tauri::command]
 fn ping_command() -> String {
@@ -43,7 +45,6 @@ fn lint_japanese_text_command(text: String, config: Option<LintConfig>) -> Vec<L
 #[tauri::command]
 fn open_vault(vault_path: String) -> Result<Vec<FileNode>, String> {
     let path = Path::new(&vault_path);
-    // Initialize git repository automatically if needed
     let _ = GitManager::init_or_open(path);
     StorageManager::list_vault_files(path).map_err(|e| e.to_string())
 }
@@ -102,6 +103,31 @@ fn git_discard_revision(repo_path: String, branch_name: String) -> Result<(), St
     GitManager::discard_shadow_branch(&repo, &branch_name).map_err(|e| e.to_string())
 }
 
+// AI Engine IPC
+#[tauri::command]
+async fn ai_run_revision(
+    repo_path: String,
+    file_path: String,
+    user_prompt: String,
+    config: AiConfig,
+) -> Result<RevisionResult, String> {
+    let r_path = Path::new(&repo_path);
+    let f_path = Path::new(&file_path);
+    AiPipeline::run_revision(r_path, f_path, &user_prompt, &config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_api_key_command(provider: String, api_key: String) -> Result<(), String> {
+    AiPipeline::save_api_key(&provider, &api_key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_api_key_command(provider: String) -> Result<Option<String>, String> {
+    Ok(AiPipeline::get_api_key(&provider))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -121,6 +147,9 @@ pub fn run() {
             git_get_diff,
             git_apply_revision,
             git_discard_revision,
+            ai_run_revision,
+            save_api_key_command,
+            get_api_key_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

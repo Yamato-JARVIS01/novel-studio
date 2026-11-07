@@ -55,5 +55,5 @@
   - `git2` クレートを用いた裏ブランチ作成・自動Commit・Diff抽出ロジックを実装し、Tauri IPCコマンドとして登録する。
 - [x] **Phase 4: Frontend - 3ペインUI & CodeMirror 6 統合**
   - Sidebar（Vaultツリー）、Editor（CodeMirror 6 + Inline Diff）、Inspector（原稿用紙換算・リンター結果リアルタイム表示）をZustandで繋ぐ。
-- [ ] **Phase 5: AI Engine 統合 (`ai`)**
+- [x] **Phase 5: AI Engine 統合 (`ai`)**
   - OpenAI互換 / Gemini / Claude のストリーミング通信クライアントと推敲Diff生成パイプラインを接続し、設定ウィザードUIと繋ぐ。

@@ -3,7 +3,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { useEditorStore, useVaultStore, useDiffStore } from '../../store';
+import { useEditorStore, useVaultStore, useDiffStore, useAiStore } from '../../store';
 import {
   Save,
   Check,
@@ -13,6 +13,8 @@ import {
   GitCompare,
   CheckCheck,
   XCircle,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 
 export function Editor() {
@@ -32,8 +34,11 @@ export function Editor() {
 
   const { activeFilePath } = useVaultStore();
   const { isDiffOpen, diffFiles, acceptRevision, rejectRevision } = useDiffStore();
+  const { isReviewing, lastError, runReview } = useAiStore();
 
   const [isZenMode, setIsZenMode] = useState(false);
+  const [isAiPromptOpen, setIsAiPromptOpen] = useState(false);
+  const [promptText, setPromptText] = useState('表現のブラッシュアップと情景描写の深化を行ってください。');
 
   // Custom editor theme based on novel writing preferences
   const customTheme = useMemo(() => {
@@ -126,7 +131,11 @@ export function Editor() {
     }
   }, [rawContent]);
 
-  // Diff inspection view
+  const handleRunAi = async () => {
+    setIsAiPromptOpen(false);
+    await runReview(promptText);
+  };
+
   const activeDiff = diffFiles.length > 0 ? diffFiles[0] : null;
 
   return (
@@ -147,6 +156,16 @@ export function Editor() {
 
         {/* Toolbar Controls */}
         <div className="flex items-center space-x-2">
+          {/* AI Revision Button */}
+          <button
+            onClick={() => setIsAiPromptOpen(!isAiPromptOpen)}
+            disabled={isReviewing || !activeFilePath}
+            className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-sm disabled:opacity-50 transition-all"
+          >
+            {isReviewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            <span>{isReviewing ? 'AI推敲中...' : 'AI推敲'}</span>
+          </button>
+
           {/* Typography Controls */}
           <div className="flex items-center bg-neutral-900 border border-neutral-700 rounded p-0.5 text-xs text-neutral-300">
             <button
@@ -199,6 +218,63 @@ export function Editor() {
           </button>
         </div>
       </div>
+
+      {/* AI Prompt Popover */}
+      {isAiPromptOpen && (
+        <div className="absolute top-12 right-6 w-96 bg-[#161b22] border border-[#30363d] rounded-xl shadow-2xl p-4 z-40 text-xs">
+          <div className="font-semibold text-neutral-200 mb-2 flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-sky-400" />
+            AI 推敲・編集指示
+          </div>
+          <div className="space-y-1.5 mb-3">
+            {[
+              '表現のブラッシュアップと情景描写の深化',
+              '文体リズムの向上と不要な修飾の削ぎ落とし',
+              '登場人物の感情・心理描写の掘り下げ',
+              '日本語組版・誤字脱字の徹底校閲',
+            ].map((preset) => (
+              <button
+                key={preset}
+                onClick={() => setPromptText(preset)}
+                className="w-full text-left p-1.5 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-[11px] border border-neutral-800 transition-colors"
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+            rows={3}
+            placeholder="AIへの推敲指示を入力..."
+            className="w-full bg-neutral-950 border border-neutral-700 rounded-md p-2 text-neutral-200 focus:outline-none focus:border-sky-500 mb-3"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setIsAiPromptOpen(false)}
+              className="px-3 py-1 rounded text-neutral-400 hover:text-white"
+            >
+              閉じる
+            </button>
+            <button
+              onClick={handleRunAi}
+              className="px-3.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-medium shadow-sm"
+            >
+              推敲を開始
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Error Banner */}
+      {lastError && (
+        <div className="bg-rose-950/90 border-b border-rose-800 text-rose-200 px-4 py-2 text-xs flex justify-between items-center">
+          <span>{lastError}</span>
+          <button onClick={() => useAiStore.setState({ lastError: null })} className="text-rose-400 hover:text-white">
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* AI Revision Banner / Diff View */}
       {isDiffOpen && (

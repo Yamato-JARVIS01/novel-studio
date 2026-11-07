@@ -79,6 +79,22 @@ export interface DiffFile {
   hunks: DiffHunk[];
 }
 
+export type AiProviderType = 'openai' | 'gemini' | 'claude' | 'ollama';
+
+export interface AiConfig {
+  provider: AiProviderType;
+  model: string;
+  api_key?: string;
+  base_url?: string;
+}
+
+export interface RevisionResult {
+  branch_name: string;
+  original_content: string;
+  revised_content: string;
+  diffs: DiffFile[];
+}
+
 // Commands
 export async function pingBackend(): Promise<string> {
   return await invoke<string>('ping_command');
@@ -138,4 +154,26 @@ export async function gitApplyRevision(repoPath: string, branchName: string): Pr
 
 export async function gitDiscardRevision(repoPath: string, branchName: string): Promise<void> {
   return await invoke<void>('git_discard_revision', { repoPath, branchName });
+}
+
+export async function aiRunRevision(
+  repoPath: string,
+  filePath: string,
+  userPrompt: string,
+  config: AiConfig
+): Promise<RevisionResult> {
+  return await invoke<RevisionResult>('ai_run_revision', {
+    repoPath,
+    filePath,
+    userPrompt,
+    config,
+  });
+}
+
+export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+  return await invoke<void>('save_api_key_command', { provider, apiKey });
+}
+
+export async function getApiKey(provider: string): Promise<string | null> {
+  return await invoke<string | null>('get_api_key_command', { provider });
 }

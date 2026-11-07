@@ -7,6 +7,8 @@ import {
   LintIssue,
   DiffFile,
   SceneStatus,
+  AiConfig,
+  AiProviderType,
   calculateMetrics,
   lintJapaneseText,
   parseDocument,
@@ -19,6 +21,7 @@ import {
   gitGetDiff,
   gitApplyRevision,
   gitDiscardRevision,
+  aiRunRevision,
 } from '../lib/tauri-commands';
 
 interface VaultState {
@@ -160,7 +163,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   updateContent: (newContent: string) => {
     set({ rawContent: newContent, isDirty: true });
-    // Run metrics & linter
     parseDocument(newContent).then(([fm, body]) => {
       set({ frontmatter: fm, body });
       calculateMetrics(body).then((metrics) => set({ metrics }));
@@ -227,7 +229,6 @@ export const useDiffStore = create<DiffState>((set, get) => ({
 
     await gitApplyRevision(vaultPath, activeShadowBranch);
     set({ activeShadowBranch: null, diffFiles: [], isDiffOpen: false });
-    // Reload active file and vault
     const activeFile = useVaultStore.getState().activeFilePath;
     if (activeFile) {
       await useEditorStore.getState().loadFile(activeFile);
@@ -246,4 +247,54 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   },
 
   closeDiff: () => set({ isDiffOpen: false }),
+}));
+
+interface AiState {
+  isReviewing: boolean;
+  lastError: string | null;
+  runReview: (userPrompt: string) => Promise<void>;
+}
+
+export const useAiStore = create<AiState>((set) => ({
+  isReviewing: false,
+  lastError: null,
+
+  runReview: async (userPrompt: string) => {
+    const vaultPath = useVaultStore.getState().vaultPath;
+    const activeFile = useVaultStore.getState().activeFilePath;
+    if (!vaultPath || !activeFile) {
+      set({ lastError: 'プロジェクトとファイルを選択してください。' });
+      return;
+    }
+
+    set({ isReviewing: true, lastError: null });
+
+    // Retrieve settings from localStorage
+    const provider = (localStorage.getItem('novel_studio_provider') || 'gemini') as AiProviderType;
+    const apiKey = localStorage.getItem('novel_studio_api_key') || undefined;
+    const model = localStorage.getItem('novel_studio_model') || (provider === 'gemini' ? 'gemini-1.5-pro' : 'gpt-4o');
+    const baseUrl = localStorage.getItem('novel_studio_base_url') || undefined;
+
+    const config: AiConfig = {
+      provider,
+      model,
+      api_key: apiKey,
+      base_url: baseUrl,
+    };
+
+    try {
+      const result = await aiRunRevision(vaultPath, activeFile, userPrompt, config);
+      // Auto open diff view
+      useDiffStore.setState({
+        activeShadowBranch: result.branch_name,
+        diffFiles: result.diffs,
+        isDiffOpen: true,
+      });
+      set({ isReviewing: false });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      set({ isReviewing: false, lastError: msg });
+      console.error('AI Review Error:', e);
+    }
+  },
 }));
