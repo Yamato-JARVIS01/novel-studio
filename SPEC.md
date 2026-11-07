@@ -49,7 +49,7 @@
 
 - [x] **Phase 1: プロジェクト初期化 & Tauri v2 スキャフォールド**
   - Vite + React + TypeScript + Tailwind CSS + Tauri v2 の初期構成を作成し、最小構成でコンパイルが通ることを確認して初回Pushする。
-- [ ] **Phase 2: Rust Backend - エディタエンジン (`editor_engine`)**
+- [x] **Phase 2: Rust Backend - エディタエンジン (`editor_engine`)**
   - `frontmatter.rs`（YAMLパース）と `jp_linter.rs`（40x40原稿用紙換算・日本語組版チェック）を実装し、テストを通す。
 - [ ] **Phase 3: Rust Backend - ストレージ & Gitエンジン (`storage`)**
   - `git2` クレートを用いた裏ブランチ作成・自動Commit・Diff抽出ロジックを実装し、Tauri IPCコマンドとして登録する。
