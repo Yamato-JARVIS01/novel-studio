@@ -47,7 +47,7 @@
 ## 4. 自律実装ロードマップ（AIエージェントへの指示）
 各Phaseを順番に実装し、必ず `cargo check` およびフロントエンドのビルド（`npm run build`）がエラーなく通ることを確認してから、`git add . && git commit && git push -u origin main` を行って次のPhaseへ進むこと。
 
-- [ ] **Phase 1: プロジェクト初期化 & Tauri v2 スキャフォールド**
+- [x] **Phase 1: プロジェクト初期化 & Tauri v2 スキャフォールド**
   - Vite + React + TypeScript + Tailwind CSS + Tauri v2 の初期構成を作成し、最小構成でコンパイルが通ることを確認して初回Pushする。
 - [ ] **Phase 2: Rust Backend - エディタエンジン (`editor_engine`)**
   - `frontmatter.rs`（YAMLパース）と `jp_linter.rs`（40x40原稿用紙換算・日本語組版チェック）を実装し、テストを通す。

@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/editor/editor.tsx","./src/components/inspector/inspector.tsx","./src/components/settings/settings.tsx","./src/components/sidebar/sidebar.tsx","./src/lib/tauri-commands.ts","./src/store/index.ts"],"version":"5.9.3"}
