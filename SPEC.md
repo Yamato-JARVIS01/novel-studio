@@ -59,3 +59,5 @@
   - OpenAI互換 / Gemini / Claude のストリーミング通信クライアントと推敲Diff生成パイプラインを接続し、設定ウィザードUIと繋ぐ。
 - [x] **Phase 6: 文芸スタジオUI/UX全面刷新 & オンボーディング**
   - エンジニア用語の完全排除（Invisible Git・安心の自動バックアップ表示）、ウェルカムオンボーディング画面（ワンクリックサンプル作成）、和紙セピア・ウォームダーク調のCodeMirror 6空間、エピソード直感追加、進捗プログレスバー、AI推敲ガイド親切化を実装。
+- [x] **Phase 6 Polish: 執筆没頭のための組版・折り返し・Invisible Frontmatter徹底**
+  - CodeMirror 6 の `EditorView.lineWrapping` による自動行折り返しの徹底、エディタからの YAML Frontmatter 完全隠蔽（本文のみ表示＋右パネルフォーム連携で自動結合保存）、文庫本風「📖 縦書き組版プレビュー」モードを実装。

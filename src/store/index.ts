@@ -14,7 +14,7 @@ import {
   parseDocument,
   readNovelFile,
   saveNovelFile,
-  updateSceneStatus,
+  updateFrontmatter,
   openVault,
   getGitStatus,
   gitAutoCommit,
@@ -149,7 +149,6 @@ export const useVaultStore = create<VaultState>((set, get) => ({
 }));
 
 interface EditorState {
-  rawContent: string;
   frontmatter: Frontmatter | null;
   body: string;
   isDirty: boolean;
@@ -157,22 +156,24 @@ interface EditorState {
   fontFamily: 'serif' | 'sans';
   theme: 'warm-dark' | 'cream-sepia';
   showLineNumbers: boolean;
+  isVerticalPreviewOpen: boolean;
   targetCharCount: number;
   metrics: ManuscriptMetrics;
   lintIssues: LintIssue[];
   loadFile: (path: string) => Promise<void>;
-  updateContent: (newContent: string) => void;
+  updateBody: (newBody: string) => void;
+  updateFrontmatterField: (patch: Partial<Frontmatter>) => void;
   save: () => Promise<void>;
   changeStatus: (status: SceneStatus) => Promise<void>;
   setFontSize: (size: number) => void;
   setFontFamily: (family: 'serif' | 'sans') => void;
   toggleTheme: () => void;
   toggleLineNumbers: () => void;
+  toggleVerticalPreview: () => void;
   setTargetCharCount: (target: number) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
-  rawContent: '',
   frontmatter: null,
   body: '',
   isDirty: false,
@@ -180,6 +181,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   fontFamily: 'serif',
   theme: 'warm-dark',
   showLineNumbers: false,
+  isVerticalPreviewOpen: false,
   targetCharCount: 10000,
   metrics: {
     total_chars: 0,
@@ -198,7 +200,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const metrics = await calculateMetrics(body);
       const issues = await lintJapaneseText(body);
       set({
-        rawContent: raw,
         frontmatter: fm,
         body,
         isDirty: false,
@@ -210,22 +211,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  updateContent: (newContent: string) => {
-    set({ rawContent: newContent, isDirty: true });
-    parseDocument(newContent).then(([fm, body]) => {
-      set({ frontmatter: fm, body });
-      calculateMetrics(body).then((metrics) => set({ metrics }));
-      lintJapaneseText(body).then((issues) => set({ lintIssues: issues }));
-    });
+  updateBody: (newBody: string) => {
+    set({ body: newBody, isDirty: true });
+    calculateMetrics(newBody).then((metrics) => set({ metrics }));
+    lintJapaneseText(newBody).then((issues) => set({ lintIssues: issues }));
+  },
+
+  updateFrontmatterField: (patch: Partial<Frontmatter>) => {
+    const { frontmatter } = get();
+    const updated = {
+      ...(frontmatter || { title: '', status: 'draft' as SceneStatus }),
+      ...patch,
+    };
+    set({ frontmatter: updated, isDirty: true });
   },
 
   save: async () => {
-    const { rawContent } = get();
+    const { body, frontmatter } = get();
     const activePath = useVaultStore.getState().activeFilePath;
     if (!activePath) return;
 
     try {
-      await saveNovelFile(activePath, rawContent);
+      // Re-combine frontmatter and body seamlessly
+      const fmToSave = frontmatter || { status: 'draft' as SceneStatus };
+      const fullDocument = await updateFrontmatter(body, fmToSave);
+      await saveNovelFile(activePath, fullDocument);
       set({ isDirty: false });
       useVaultStore.getState().refreshGitStatus();
       useVaultStore.getState().refreshFiles();
@@ -235,16 +245,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   changeStatus: async (status: SceneStatus) => {
-    const { rawContent, save } = get();
-    const updated = await updateSceneStatus(rawContent, status);
-    get().updateContent(updated);
-    await save();
+    get().updateFrontmatterField({ status });
+    await get().save();
   },
 
   setFontSize: (fontSize: number) => set({ fontSize }),
   setFontFamily: (fontFamily: 'serif' | 'sans') => set({ fontFamily }),
   toggleTheme: () => set((state) => ({ theme: state.theme === 'warm-dark' ? 'cream-sepia' : 'warm-dark' })),
   toggleLineNumbers: () => set((state) => ({ showLineNumbers: !state.showLineNumbers })),
+  toggleVerticalPreview: () => set((state) => ({ isVerticalPreviewOpen: !state.isVerticalPreviewOpen })),
   setTargetCharCount: (targetCharCount: number) => set({ targetCharCount }),
 }));
 

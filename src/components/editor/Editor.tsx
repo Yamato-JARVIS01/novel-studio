@@ -3,6 +3,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { useEditorStore, useVaultStore, useDiffStore, useAiStore } from '../../store';
+import { VerticalPreviewModal } from './VerticalPreviewModal';
 import {
   Save,
   Check,
@@ -21,6 +22,7 @@ import {
   FolderOpen,
   ChevronDown,
   AlertCircle,
+  BookMarked,
 } from 'lucide-react';
 
 interface EditorProps {
@@ -32,18 +34,19 @@ export function Editor({ onOpenSettings }: EditorProps) {
   const viewRef = useRef<EditorView | null>(null);
 
   const {
-    rawContent,
+    body,
     isDirty,
     fontSize,
     fontFamily,
     theme,
     showLineNumbers,
-    updateContent,
+    updateBody,
     save,
     setFontSize,
     setFontFamily,
     toggleTheme,
     toggleLineNumbers,
+    toggleVerticalPreview,
   } = useEditorStore();
 
   const { activeFilePath, loadSampleProject, setVaultPath } = useVaultStore();
@@ -77,6 +80,12 @@ export function Editor({ onOpenSettings }: EditorProps) {
           letterSpacing: '0.05em',
           maxWidth: '760px',
           margin: '0 auto',
+          wordBreak: 'break-all',
+          overflowWrap: 'break-word',
+        },
+        '.cm-line': {
+          wordBreak: 'break-all',
+          overflowWrap: 'break-word',
         },
         '.cm-cursor': {
           borderLeftColor: '#b45309',
@@ -116,6 +125,12 @@ export function Editor({ onOpenSettings }: EditorProps) {
         letterSpacing: '0.05em',
         maxWidth: '760px',
         margin: '0 auto',
+        wordBreak: 'break-all',
+        overflowWrap: 'break-word',
+      },
+      '.cm-line': {
+        wordBreak: 'break-all',
+        overflowWrap: 'break-word',
       },
       '.cm-cursor': {
         borderLeftColor: '#fbbf24',
@@ -153,12 +168,13 @@ export function Editor({ onOpenSettings }: EditorProps) {
   useEffect(() => {
     if (!editorRef.current || !activeFilePath) return;
 
-    // Destroy existing view if present
     if (viewRef.current) {
       viewRef.current.destroy();
     }
 
+    // 1. Line Wrapping extension to guarantee no horizontal overflow
     const extensions = [
+      EditorView.lineWrapping,
       highlightActiveLine(),
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -166,7 +182,7 @@ export function Editor({ onOpenSettings }: EditorProps) {
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const newDoc = update.state.doc.toString();
-          updateContent(newDoc);
+          updateBody(newDoc);
         }
       }),
     ];
@@ -176,7 +192,7 @@ export function Editor({ onOpenSettings }: EditorProps) {
     }
 
     const startState = EditorState.create({
-      doc: rawContent,
+      doc: body,
       extensions,
     });
 
@@ -197,19 +213,18 @@ export function Editor({ onOpenSettings }: EditorProps) {
   useEffect(() => {
     if (viewRef.current) {
       const currentDoc = viewRef.current.state.doc.toString();
-      if (currentDoc !== rawContent) {
+      if (currentDoc !== body) {
         viewRef.current.dispatch({
-          changes: { from: 0, to: currentDoc.length, insert: rawContent },
+          changes: { from: 0, to: currentDoc.length, insert: body },
         });
       }
     }
-  }, [rawContent]);
+  }, [body]);
 
   const handleTriggerAi = async (presetPrompt?: string) => {
     const prompt = presetPrompt || promptText;
     setIsAiMenuOpen(false);
 
-    // Check if API key or local Ollama is set
     const apiKey = localStorage.getItem('novel_studio_api_key');
     const provider = localStorage.getItem('novel_studio_provider') || 'gemini';
     if (!apiKey && provider !== 'ollama') {
@@ -257,6 +272,21 @@ export function Editor({ onOpenSettings }: EditorProps) {
 
         {/* Toolbar Controls */}
         <div className="flex items-center space-x-2">
+          {/* Vertical Preview Button */}
+          <button
+            onClick={toggleVerticalPreview}
+            disabled={!activeFilePath}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+              isSepia
+                ? 'bg-amber-100/70 hover:bg-amber-200/70 border-amber-300 text-amber-950'
+                : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-amber-300'
+            } disabled:opacity-40`}
+            title="文庫本のように美しい縦書きで確認"
+          >
+            <BookMarked className="w-3.5 h-3.5" />
+            <span>縦書きプレビュー</span>
+          </button>
+
           {/* AI Editing Dropdown */}
           <div className="relative">
             <div className="flex items-center">
@@ -569,6 +599,9 @@ export function Editor({ onOpenSettings }: EditorProps) {
           <div ref={editorRef} className="h-full w-full overflow-y-auto" />
         )}
       </div>
+
+      {/* Vertical Japanese Book Reading Modal */}
+      <VerticalPreviewModal />
     </div>
   );
 }

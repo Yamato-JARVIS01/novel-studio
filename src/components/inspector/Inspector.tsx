@@ -21,6 +21,7 @@ export function Inspector() {
     targetCharCount,
     theme,
     changeStatus,
+    updateFrontmatterField,
     setTargetCharCount,
   } = useEditorStore();
 
@@ -211,6 +212,7 @@ export function Inspector() {
                 ].map((item) => (
                   <button
                     key={item.key}
+                    type="button"
                     onClick={() => changeStatus(item.key as SceneStatus)}
                     className={`py-2 text-[11px] font-bold rounded-xl transition-all ${
                       frontmatter?.status === item.key
@@ -226,42 +228,90 @@ export function Inspector() {
               </div>
             </div>
 
-            {/* Scene Info Fields */}
+            {/* Editable Scene Form (Invisible Frontmatter) */}
             <div className={`p-4 rounded-2xl border space-y-3.5 ${
               isSepia ? 'bg-white border-amber-200/80' : 'bg-[#201f1d] border-[#33312d]'
             }`}>
-              <div>
-                <span className="text-[11px] opacity-60 block mb-1">エピソード名</span>
-                <div className="font-bold text-sm">{frontmatter?.title || '（無題のエピソード）'}</div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold opacity-70 block">エピソード名（タイトル）</label>
+                <input
+                  type="text"
+                  value={frontmatter?.title || ''}
+                  onChange={(e) => updateFrontmatterField({ title: e.target.value })}
+                  placeholder="タイトルを入力..."
+                  className={`w-full border rounded-xl px-2.5 py-1.5 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                    isSepia
+                      ? 'bg-amber-50/40 border-amber-200 text-neutral-900'
+                      : 'bg-[#151412] border-[#383531] text-neutral-100'
+                  }`}
+                />
               </div>
-              <div>
-                <span className="text-[11px] opacity-60 flex items-center gap-1 mb-1">
-                  <User className="w-3 h-3" /> 視点人物 (POV)
-                </span>
-                <div className="font-medium">{frontmatter?.pov || '（設定なし）'}</div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold opacity-70 flex items-center gap-1">
+                  <User className="w-3 h-3 text-amber-500" /> 視点人物 (POV)
+                </label>
+                <input
+                  type="text"
+                  value={frontmatter?.pov || ''}
+                  onChange={(e) => updateFrontmatterField({ pov: e.target.value })}
+                  placeholder="例: 主人公、アリス、三人称客観..."
+                  className={`w-full border rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                    isSepia
+                      ? 'bg-amber-50/40 border-amber-200 text-neutral-900'
+                      : 'bg-[#151412] border-[#383531] text-neutral-100'
+                  }`}
+                />
               </div>
-              <div>
-                <span className="text-[11px] opacity-60 flex items-center gap-1 mb-1">
-                  <Calendar className="w-3 h-3" /> 作中の時系列・日時
-                </span>
-                <div>{frontmatter?.timeline || '（設定なし）'}</div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold opacity-70 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-amber-500" /> 作中の時系列・日時
+                </label>
+                <input
+                  type="text"
+                  value={frontmatter?.timeline || ''}
+                  onChange={(e) => updateFrontmatterField({ timeline: e.target.value })}
+                  placeholder="例: 1日目の夕暮れ、秋の夜半..."
+                  className={`w-full border rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                    isSepia
+                      ? 'bg-amber-50/40 border-amber-200 text-neutral-900'
+                      : 'bg-[#151412] border-[#383531] text-neutral-100'
+                  }`}
+                />
               </div>
-              <div>
-                <span className="text-[11px] opacity-60 flex items-center gap-1 mb-1">
-                  <MapPin className="w-3 h-3" /> 場所・舞台
-                </span>
-                <div>{frontmatter?.location || '（設定なし）'}</div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold opacity-70 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-amber-500" /> 場所・舞台
+                </label>
+                <input
+                  type="text"
+                  value={frontmatter?.location || ''}
+                  onChange={(e) => updateFrontmatterField({ location: e.target.value })}
+                  placeholder="例: 羅生門の下、王都の裏路地..."
+                  className={`w-full border rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                    isSepia
+                      ? 'bg-amber-50/40 border-amber-200 text-neutral-900'
+                      : 'bg-[#151412] border-[#383531] text-neutral-100'
+                  }`}
+                />
               </div>
-              {frontmatter?.synopsis && (
-                <div>
-                  <span className="text-[11px] opacity-60 block mb-1">あらすじ・プロット構想</span>
-                  <p className={`p-2.5 rounded-xl border leading-relaxed text-[11px] ${
-                    isSepia ? 'bg-amber-50/50 border-amber-200/60' : 'bg-[#292724] border-[#3d3a35]'
-                  }`}>
-                    {frontmatter.synopsis}
-                  </p>
-                </div>
-              )}
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold opacity-70 block">あらすじ・プロット構想メモ</label>
+                <textarea
+                  rows={4}
+                  value={frontmatter?.synopsis || ''}
+                  onChange={(e) => updateFrontmatterField({ synopsis: e.target.value })}
+                  placeholder="このエピソードの目的や伏線、執筆メモを入力..."
+                  className={`w-full border rounded-xl p-2.5 leading-relaxed text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 ${
+                    isSepia
+                      ? 'bg-amber-50/40 border-amber-200 text-neutral-900'
+                      : 'bg-[#151412] border-[#383531] text-neutral-100'
+                  }`}
+                />
+              </div>
             </div>
           </div>
         )}
