@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useVaultStore, useEditorStore, useWorldGraphStore } from '../../store';
+import { useVaultStore, useEditorStore, useWorldGraphStore, useAiStore } from '../../store';
 import {
   Compass,
   X,
@@ -10,6 +10,12 @@ import {
   Users,
   Sparkles,
   Check,
+  RefreshCw,
+  Loader2,
+  Wand2,
+  Layers,
+  ArrowRight,
+  GitBranch,
 } from 'lucide-react';
 
 interface FloatingPlotHudProps {
@@ -18,15 +24,28 @@ interface FloatingPlotHudProps {
 }
 
 export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
-  const { vaultPath } = useVaultStore();
-  const { frontmatter, updateFrontmatterField, theme } = useEditorStore();
-  const { overallPlot, saveOverallPlotText, sceneAnalysis, loadOverallPlot } = useWorldGraphStore();
+  const { vaultPath, activeFilePath } = useVaultStore();
+  const { frontmatter, updateFrontmatterField, theme, body } = useEditorStore();
+  const {
+    overallPlot,
+    saveOverallPlotText,
+    sceneAnalysis,
+    loadOverallPlot,
+    syncManuscriptToWorldAction,
+    isSyncingManuscript,
+    syncResultNotice,
+  } = useWorldGraphStore();
+  const { generateBeats, expandDraft, isGeneratingBeats, isExpandingDraft } = useAiStore();
 
-  const [activeTab, setActiveTab] = useState<'episode' | 'overall' | 'characters'>('episode');
+  const [activeTab, setActiveTab] = useState<'episode' | 'assistant' | 'overall' | 'characters'>('episode');
   const [isMinimized, setIsMinimized] = useState(false);
   const [localPlot, setLocalPlot] = useState(overallPlot);
   const [localSynopsis, setLocalSynopsis] = useState(frontmatter?.synopsis || '');
   const [isSavedNotice, setIsSavedNotice] = useState(false);
+
+  // Scene Beats & Draft Expansion state
+  const [generatedBeats, setGeneratedBeats] = useState<string | null>(null);
+  const [draftInstruction, setDraftInstruction] = useState('筋書きの展開に沿って、情景描写と登場人物の会話を自然に執筆・加筆してください。');
 
   const isSepia = theme === 'cream-sepia';
 
@@ -60,6 +79,40 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
     setTimeout(() => setIsSavedNotice(false), 2000);
   };
 
+  // Phase 9: Sync manuscript entities to notes & World Graph
+  const handleSyncToWorld = async () => {
+    if (!vaultPath || !body) return;
+    await syncManuscriptToWorldAction(vaultPath, body);
+  };
+
+  // Phase 9: Generate 3-5 structured scene beats
+  const handleGenerateBeats = async () => {
+    if (!vaultPath) return;
+    const beats = await generateBeats(vaultPath, overallPlot, localSynopsis);
+    if (beats) {
+      setGeneratedBeats(beats);
+    }
+  };
+
+  // Append generated beats to synopsis
+  const handleAppendBeatsToSynopsis = () => {
+    if (!generatedBeats) return;
+    const newSynopsis = localSynopsis
+      ? `${localSynopsis}\n\n【起承転結ビート構成】\n${generatedBeats}`
+      : `【起承転結ビート構成】\n${generatedBeats}`;
+    setLocalSynopsis(newSynopsis);
+    updateFrontmatterField({ synopsis: newSynopsis });
+    useEditorStore.getState().save();
+    setIsSavedNotice(true);
+    setTimeout(() => setIsSavedNotice(false), 2000);
+  };
+
+  // Phase 9: Expand scene draft into shadow branch & Inline Diff
+  const handleExpandDraft = async () => {
+    if (!vaultPath || !activeFilePath) return;
+    await expandDraft(vaultPath, activeFilePath, overallPlot, localSynopsis, draftInstruction);
+  };
+
   // Minimized Floating Pill
   if (isMinimized) {
     return (
@@ -82,12 +135,12 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
   }
 
   return (
-    <div className="absolute top-14 right-6 z-40 w-96 max-w-[calc(100vw-3rem)] animate-in fade-in slide-in-from-top-3 duration-200">
+    <div className="absolute top-14 right-6 z-40 w-[420px] max-w-[calc(100vw-3rem)] animate-in fade-in slide-in-from-top-3 duration-200">
       <div
         className={`rounded-2xl border shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col transition-all ${
           isSepia
-            ? 'bg-[#fcfbf9]/80 border-amber-900/15 text-neutral-800 shadow-amber-950/10'
-            : 'bg-[#1b1a17]/85 border-amber-500/25 text-neutral-200 shadow-black/60 ring-1 ring-white/5'
+            ? 'bg-[#fcfbf9]/85 border-amber-900/15 text-neutral-800 shadow-amber-950/10'
+            : 'bg-[#1b1a17]/90 border-amber-500/25 text-neutral-200 shadow-black/70 ring-1 ring-white/5'
         }`}
       >
         {/* HUD Window Header */}
@@ -102,14 +155,14 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
             </div>
             <div>
               <div className="text-xs font-bold tracking-wide flex items-center gap-1.5">
-                <span>筋書き・プロット HUD</span>
+                <span>筋書き・構成羅針盤 HUD</span>
                 {isSavedNotice && (
                   <span className="text-[10px] text-emerald-500 flex items-center font-normal animate-pulse">
                     <Check className="w-3 h-3 mr-0.5" /> 保存済
                   </span>
                 )}
               </div>
-              <div className="text-[10px] opacity-60">執筆を導く羅針盤</div>
+              <div className="text-[10px] opacity-60">プロット直結執筆支援</div>
             </div>
           </div>
 
@@ -131,11 +184,44 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
           </div>
         </div>
 
+        {/* Global Action Bar: Bi-directional Manuscript to World Sync */}
+        <div
+          className={`px-3 py-1.5 border-b flex items-center justify-between text-xs transition-colors ${
+            isSepia ? 'bg-amber-100/50 border-amber-900/10' : 'bg-amber-950/20 border-neutral-800/80'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 overflow-hidden">
+            <RefreshCw
+              className={`w-3 h-3 shrink-0 text-amber-500 ${isSyncingManuscript ? 'animate-spin' : ''}`}
+            />
+            <span className="text-[11px] truncate opacity-80">
+              {syncResultNotice || '原稿の新キャラ・新設定を相関図に還元'}
+            </span>
+          </div>
+          <button
+            onClick={handleSyncToWorld}
+            disabled={isSyncingManuscript || !body}
+            className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 shrink-0 transition-all ${
+              isSepia
+                ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs'
+                : 'bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold'
+            } disabled:opacity-40`}
+            title="原稿本文から未登録の登場人物・用語・関係性を自動抽出してノートとグラフDBに反映"
+          >
+            {isSyncingManuscript ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3 h-3" />
+            )}
+            <span>設定・相関図に還元</span>
+          </button>
+        </div>
+
         {/* Tab Controls */}
-        <div className="grid grid-cols-3 p-1.5 gap-1 border-b text-xs border-inherit">
+        <div className="grid grid-cols-4 p-1.5 gap-1 border-b text-xs border-inherit">
           <button
             onClick={() => setActiveTab('episode')}
-            className={`py-1.5 px-2 rounded-lg font-medium text-center transition-all flex items-center justify-center gap-1 text-[11px] ${
+            className={`py-1.5 px-1.5 rounded-lg font-medium text-center transition-all flex items-center justify-center gap-1 text-[11px] ${
               activeTab === 'episode'
                 ? isSepia
                   ? 'bg-amber-600 text-white shadow-xs'
@@ -148,8 +234,22 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
           </button>
 
           <button
+            onClick={() => setActiveTab('assistant')}
+            className={`py-1.5 px-1.5 rounded-lg font-medium text-center transition-all flex items-center justify-center gap-1 text-[11px] ${
+              activeTab === 'assistant'
+                ? isSepia
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-amber-500 text-neutral-950 font-semibold shadow-xs'
+                : 'opacity-70 hover:opacity-100 hover:bg-neutral-500/10'
+            }`}
+          >
+            <Sparkles className="w-3 h-3 text-amber-300" />
+            <span>展開支援</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('overall')}
-            className={`py-1.5 px-2 rounded-lg font-medium text-center transition-all flex items-center justify-center gap-1 text-[11px] ${
+            className={`py-1.5 px-1.5 rounded-lg font-medium text-center transition-all flex items-center justify-center gap-1 text-[11px] ${
               activeTab === 'overall'
                 ? isSepia
                   ? 'bg-amber-600 text-white shadow-xs'
@@ -163,7 +263,7 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
 
           <button
             onClick={() => setActiveTab('characters')}
-            className={`py-1.5 px-2 rounded-lg font-medium text-center transition-all flex items-center justify-center gap-1 text-[11px] ${
+            className={`py-1.5 px-1.5 rounded-lg font-medium text-center transition-all flex items-center justify-center gap-1 text-[11px] ${
               activeTab === 'characters'
                 ? isSepia
                   ? 'bg-amber-600 text-white shadow-xs'
@@ -177,14 +277,23 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
         </div>
 
         {/* Tab Contents */}
-        <div className="p-3 max-h-[420px] overflow-y-auto space-y-3 text-xs leading-relaxed">
+        <div className="p-3 max-h-[440px] overflow-y-auto space-y-3 text-xs leading-relaxed">
           {/* Tab 1: Episode Specific Plot */}
           {activeTab === 'episode' && (
             <div className="space-y-3">
               <div>
-                <label className="text-[11px] font-bold block mb-1 opacity-70">
-                  本話の狙い・あらすじ（Synopsis）
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold opacity-70">
+                    本話の狙い・あらすじ（Synopsis）
+                  </label>
+                  <button
+                    onClick={() => setActiveTab('assistant')}
+                    className="text-[10px] text-amber-500 hover:underline flex items-center gap-1"
+                  >
+                    <Wand2 className="w-3 h-3" />
+                    <span>AIでビート展開</span>
+                  </button>
+                </div>
                 <textarea
                   value={localSynopsis}
                   onChange={(e) => setLocalSynopsis(e.target.value)}
@@ -231,7 +340,117 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
             </div>
           )}
 
-          {/* Tab 2: Overall Plot Markdown */}
+          {/* Tab 2: Scene Beats & Draft Expansion Assistant */}
+          {activeTab === 'assistant' && (
+            <div className="space-y-4">
+              {/* Feature 1: Scene Beats Generator */}
+              <div
+                className={`p-3 rounded-xl border space-y-2.5 ${
+                  isSepia ? 'bg-white/80 border-amber-900/15' : 'bg-[#151412]/80 border-neutral-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-amber-600 dark:text-amber-400">
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>① 起承転結シーンビート提案</span>
+                  </div>
+                  <button
+                    onClick={handleGenerateBeats}
+                    disabled={isGeneratingBeats || !vaultPath}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-2xs disabled:opacity-40 transition-all"
+                  >
+                    {isGeneratingBeats ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3 h-3" />
+                    )}
+                    <span>{isGeneratingBeats ? 'ビート構成中...' : 'ビートを自動生成'}</span>
+                  </button>
+                </div>
+
+                <p className="text-[10px] opacity-70">
+                  全体構成と話筋書き、世界観設定を統合し、3〜5個の具体的なシーン展開ビートを提案します。
+                </p>
+
+                {generatedBeats ? (
+                  <div className="space-y-2">
+                    <div
+                      className={`p-2.5 rounded-lg border text-[11px] whitespace-pre-wrap max-h-36 overflow-y-auto leading-relaxed font-mono ${
+                        isSepia ? 'bg-amber-50/70 border-amber-900/10' : 'bg-neutral-900/80 border-neutral-700/60'
+                      }`}
+                    >
+                      {generatedBeats}
+                    </div>
+                    <div className="flex justify-end gap-1.5">
+                      <button
+                        onClick={handleAppendBeatsToSynopsis}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-2xs"
+                      >
+                        <Check className="w-3 h-3" />
+                        <span>話筋書きに挿入反映</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[10px] opacity-40 text-center py-2 border border-dashed border-neutral-500/20 rounded-lg">
+                    「ビートを自動生成」を押すとシーン展開案がここに表示されます
+                  </div>
+                )}
+              </div>
+
+              {/* Feature 2: Draft Expansion & Revision Bridge */}
+              <div
+                className={`p-3 rounded-xl border space-y-2.5 ${
+                  isSepia ? 'bg-white/80 border-amber-900/15' : 'bg-[#151412]/80 border-neutral-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-amber-600 dark:text-amber-400">
+                    <GitBranch className="w-3.5 h-3.5" />
+                    <span>② 本文への推敲・加筆ブリッジ</span>
+                  </div>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-mono">
+                    Shadow Diff
+                  </span>
+                </div>
+
+                <p className="text-[10px] opacity-70">
+                  筋書きに沿って原稿の続きや描写強化をAIが下書きし、シャドウブランチのInline Diff（採用/却下）へ直接送ります。
+                </p>
+
+                <div>
+                  <label className="text-[10px] font-semibold block mb-1 opacity-70">
+                    加筆・展開の指示:
+                  </label>
+                  <textarea
+                    value={draftInstruction}
+                    onChange={(e) => setDraftInstruction(e.target.value)}
+                    rows={3}
+                    className={`w-full p-2 rounded-lg text-[11px] resize-none outline-none border transition-all ${
+                      isSepia
+                        ? 'bg-white/90 border-amber-900/20 focus:border-amber-600 text-neutral-900'
+                        : 'bg-[#131210]/90 border-neutral-700/80 focus:border-amber-400 text-neutral-100'
+                    }`}
+                  />
+                </div>
+
+                <button
+                  onClick={handleExpandDraft}
+                  disabled={isExpandingDraft || !vaultPath || !activeFilePath}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white shadow-xs disabled:opacity-40 transition-all"
+                >
+                  {isExpandingDraft ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isExpandingDraft ? '下書きを生成中...' : '下書きを展開してDiff比較へ'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Tab 3: Overall Plot Markdown */}
           {activeTab === 'overall' && (
             <div className="space-y-3">
               <div>
@@ -269,7 +488,7 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
             </div>
           )}
 
-          {/* Tab 3: Active Scene Character / Rule Digest */}
+          {/* Tab 4: Active Scene Character / Rule Digest */}
           {activeTab === 'characters' && (
             <div className="space-y-3">
               <div className="text-[11px] font-bold opacity-70 flex items-center gap-1">

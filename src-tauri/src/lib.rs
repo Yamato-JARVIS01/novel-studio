@@ -2,6 +2,7 @@ pub mod editor_engine;
 pub mod storage;
 pub mod ai;
 pub mod world_graph;
+pub mod export;
 
 use std::path::Path;
 use editor_engine::frontmatter::{extract_frontmatter, update_frontmatter, update_status, Frontmatter, SceneStatus};
@@ -11,7 +12,8 @@ use storage::auto_sync::{AutoSyncEngine, SyncConfig, SyncStatus};
 use storage::{FileNode, StorageManager};
 use ai::provider::AiConfig;
 use ai::pipeline::{AiPipeline, RevisionResult};
-use world_graph::{GraphData, KuzuGraphEngine, SceneGraphAnalysis, WorldEdge, WorldNode};
+use world_graph::{GraphData, KuzuGraphEngine, SceneGraphAnalysis, SyncManuscriptResult, WorldEdge, WorldNode};
+use export::{ExportEngine, ExportOptions, ExportResult};
 
 #[tauri::command]
 fn ping_command() -> String {
@@ -289,6 +291,80 @@ fn trigger_auto_sync(vault_path: String, reason: String) -> Result<SyncStatus, S
     Ok(AutoSyncEngine::trigger_sync(Path::new(&vault_path), &reason))
 }
 
+// Phase 9 Bi-directional Manuscript to World Graph Sync
+#[tauri::command]
+async fn sync_manuscript_to_world_command(
+    vault_path: String,
+    manuscript_text: String,
+    config: Option<AiConfig>,
+) -> Result<SyncManuscriptResult, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let result = engine
+        .sync_manuscript_to_world(&manuscript_text, config.as_ref())
+        .await
+        .map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "原稿から世界観設定を自動還元");
+    Ok(result)
+}
+
+// Phase 9 Plot HUD Scene Beats & Draft Expansion
+#[tauri::command]
+async fn ai_generate_scene_beats_command(
+    vault_path: String,
+    overall_plot: String,
+    episode_synopsis: String,
+    config: AiConfig,
+) -> Result<String, String> {
+    AiPipeline::generate_scene_beats(
+        Path::new(&vault_path),
+        &overall_plot,
+        &episode_synopsis,
+        &config,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ai_expand_scene_draft_command(
+    vault_path: String,
+    file_path: String,
+    overall_plot: String,
+    episode_synopsis: String,
+    instruction: String,
+    config: AiConfig,
+) -> Result<RevisionResult, String> {
+    AiPipeline::expand_scene_draft(
+        Path::new(&vault_path),
+        Path::new(&file_path),
+        &overall_plot,
+        &episode_synopsis,
+        &instruction,
+        &config,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+// Phase 10 Manuscript Export Studio IPC
+#[tauri::command]
+fn export_manuscript_command(
+    vault_path: String,
+    options: ExportOptions,
+) -> Result<ExportResult, String> {
+    ExportEngine::export_vault(Path::new(&vault_path), &options).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_exported_file_command(
+    vault_path: String,
+    file_name: String,
+    content: String,
+) -> Result<String, String> {
+    ExportEngine::save_export_file(Path::new(&vault_path), &file_name, &content)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -330,6 +406,11 @@ pub fn run() {
             save_overall_plot,
             sync_notes_to_graph,
             extract_graph_with_ai_command,
+            sync_manuscript_to_world_command,
+            ai_generate_scene_beats_command,
+            ai_expand_scene_draft_command,
+            export_manuscript_command,
+            save_exported_file_command,
             get_sync_status,
             get_sync_config,
             save_sync_config,

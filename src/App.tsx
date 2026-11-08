@@ -4,8 +4,9 @@ import { Editor } from './components/editor/Editor';
 import { Inspector } from './components/inspector/Inspector';
 import { SettingsModal } from './components/settings/Settings';
 import { WorldStudioModal } from './components/world/WorldStudioModal';
-import { Settings as SettingsIcon, Share2, BookOpen } from 'lucide-react';
-import { useVaultStore, useEditorStore } from './store';
+import { ExportModal } from './components/export/ExportModal';
+import { Settings as SettingsIcon, Share2, BookOpen, FileDown } from 'lucide-react';
+import { useVaultStore, useEditorStore, useExportStore } from './store';
 
 export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -16,6 +17,7 @@ export default function App() {
 
   const { vaultPath, activeFilePath } = useVaultStore();
   const { theme, isZenFocus, isTyping, isInspectorPinned } = useEditorStore();
+  const { isOpen: isExportOpen, openExportModal, closeExportModal } = useExportStore();
 
   const isSepia = theme === 'cream-sepia';
 
@@ -99,6 +101,20 @@ export default function App() {
             </span>
           </button>
 
+          {/* Export Studio Button */}
+          <button
+            onClick={() => openExportModal()}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              isSepia
+                ? 'bg-amber-600/10 hover:bg-amber-600/20 text-amber-900 border-amber-600/30'
+                : 'bg-amber-400/10 hover:bg-amber-400/20 text-amber-300 border-amber-400/30'
+            }`}
+            title="公募提出用原稿や各種Web小説サイト向け記法に一括エクスポート"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            <span>原稿出力</span>
+          </button>
+
           {/* Settings Trigger */}
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -151,6 +167,9 @@ export default function App() {
 
       {/* Settings Modal */}
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+
+      {/* Export Studio Modal */}
+      <ExportModal isOpen={isExportOpen} onClose={closeExportModal} />
     </div>
   );
 }

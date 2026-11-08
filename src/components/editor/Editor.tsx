@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { useEditorStore, useVaultStore, useDiffStore, useAiStore } from '../../store';
+import { useEditorStore, useVaultStore, useDiffStore, useAiStore, useWorldGraphStore, useExportStore } from '../../store';
 import { VerticalPreviewModal } from './VerticalPreviewModal';
 import { rubyExtension } from './rubyExtension';
 import { FloatingPlotHud } from './FloatingPlotHud';
@@ -28,6 +28,8 @@ import {
   BookMarked,
   Compass,
   History,
+  RefreshCw,
+  FileDown,
 } from 'lucide-react';
 
 interface EditorProps {
@@ -58,9 +60,11 @@ export function Editor({ onOpenSettings }: EditorProps) {
     setIsTyping,
   } = useEditorStore();
 
-  const { activeFilePath, loadSampleProject, setVaultPath } = useVaultStore();
+  const { vaultPath, activeFilePath, loadSampleProject, setVaultPath } = useVaultStore();
   const { isDiffOpen, diffFiles, acceptRevision, rejectRevision } = useDiffStore();
   const { isReviewing, lastError, runReview } = useAiStore();
+  const { syncManuscriptToWorldAction, isSyncingManuscript, syncResultNotice } = useWorldGraphStore();
+  const { openExportModal } = useExportStore();
 
   const [isPlotHudOpen, setIsPlotHudOpen] = useState(false);
   const [isTimeMachineOpen, setIsTimeMachineOpen] = useState(false);
@@ -334,6 +338,44 @@ export function Editor({ onOpenSettings }: EditorProps) {
           >
             <BookMarked className="w-3.5 h-3.5" />
             <span>縦書きプレビュー</span>
+          </button>
+
+          {/* Bi-directional World Graph Auto-sync Button */}
+          <button
+            onClick={async () => {
+              if (vaultPath && body) {
+                await syncManuscriptToWorldAction(vaultPath, body);
+              }
+            }}
+            disabled={isSyncingManuscript || !vaultPath || !body}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+              isSepia
+                ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-neutral-700'
+                : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-neutral-300'
+            } disabled:opacity-40`}
+            title="原稿本文から新キャラ・重要用語を抽出し、設定ノートとグラフDBへ自動還元"
+          >
+            {isSyncingManuscript ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 text-amber-500" />
+            )}
+            <span>設定還元</span>
+          </button>
+
+          {/* Export Studio Modal Button */}
+          <button
+            onClick={() => openExportModal()}
+            disabled={!vaultPath}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+              isSepia
+                ? 'bg-amber-100/70 hover:bg-amber-200/70 border-amber-300 text-amber-950'
+                : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-amber-300'
+            } disabled:opacity-40`}
+            title="公募提出原稿やWeb小説サイト記法（カクヨム/なろう/青空文庫/縦書きHTML）へ一括出力"
+          >
+            <FileDown className="w-3.5 h-3.5 text-amber-500" />
+            <span>原稿出力</span>
           </button>
 
           {/* AI Editing Dropdown */}
@@ -651,6 +693,16 @@ export function Editor({ onOpenSettings }: EditorProps) {
         )}
         {/* Floating Plot & Synopsis HUD */}
         <FloatingPlotHud isOpen={isPlotHudOpen} onClose={() => setIsPlotHudOpen(false)} />
+
+        {/* Floating Notification Toast for Bi-directional Setting Sync */}
+        {syncResultNotice && (
+          <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-3 duration-200">
+            <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 text-white shadow-xl text-xs font-semibold backdrop-blur-md">
+              <Check className="w-4 h-4 text-emerald-300" />
+              <span>{syncResultNotice}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Vertical Japanese Book Reading Modal */}

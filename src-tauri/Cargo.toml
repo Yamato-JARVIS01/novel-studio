@@ -35,3 +35,11 @@ log = "0.4"
 [dev-dependencies]
 tempfile = "3.16"
 
+[profile.dev]
+debug = 0
+strip = "debuginfo"
+
+[profile.test]
+debug = 0
+
+

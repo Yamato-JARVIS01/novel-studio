@@ -327,3 +327,98 @@ export async function saveSyncConfig(vaultPath: string, config: SyncConfig): Pro
 export async function triggerAutoSync(vaultPath: string, reason: string): Promise<SyncStatus> {
   return await invoke<SyncStatus>('trigger_auto_sync', { vaultPath, reason });
 }
+
+// Phase 9 & 10 Commands & Types
+export interface SyncManuscriptResult {
+  added_nodes_count: number;
+  added_edges_count: number;
+  added_nodes: WorldNode[];
+  added_edges: WorldEdge[];
+  message: string;
+  graph: GraphData;
+}
+
+export interface ExportOptions {
+  format: 'submission_txt' | 'submission_html' | 'kakuyomu' | 'narou' | 'aozora' | 'plain';
+  include_cover: boolean;
+  include_chapter_titles: boolean;
+}
+
+export interface ExportResult {
+  title: string;
+  content: string;
+  format: string;
+  char_count: number;
+  page_count_400: number;
+  page_count_20x20: number;
+  page_count_40x40: number;
+  episode_count: number;
+  suggested_filename: string;
+}
+
+export async function syncManuscriptToWorld(
+  vaultPath: string,
+  manuscriptText: string,
+  config?: AiConfig
+): Promise<SyncManuscriptResult> {
+  return await invoke<SyncManuscriptResult>('sync_manuscript_to_world_command', {
+    vaultPath,
+    manuscriptText,
+    config: config || null,
+  });
+}
+
+export async function aiGenerateSceneBeats(
+  vaultPath: string,
+  overallPlot: string,
+  episodeSynopsis: string,
+  config: AiConfig
+): Promise<string> {
+  return await invoke<string>('ai_generate_scene_beats_command', {
+    vaultPath,
+    overallPlot,
+    episodeSynopsis,
+    config,
+  });
+}
+
+export async function aiExpandSceneDraft(
+  vaultPath: string,
+  filePath: string,
+  overallPlot: string,
+  episodeSynopsis: string,
+  instruction: string,
+  config: AiConfig
+): Promise<RevisionResult> {
+  return await invoke<RevisionResult>('ai_expand_scene_draft_command', {
+    vaultPath,
+    filePath,
+    overallPlot,
+    episodeSynopsis,
+    instruction,
+    config,
+  });
+}
+
+export async function exportManuscript(
+  vaultPath: string,
+  options: ExportOptions
+): Promise<ExportResult> {
+  return await invoke<ExportResult>('export_manuscript_command', {
+    vaultPath,
+    options,
+  });
+}
+
+export async function saveExportedFile(
+  vaultPath: string,
+  fileName: string,
+  content: string
+): Promise<string> {
+  return await invoke<string>('save_exported_file_command', {
+    vaultPath,
+    fileName,
+    content,
+  });
+}
+

@@ -48,6 +48,14 @@ import {
   readWorldNote,
   saveWorldNote,
   syncNotesToGraph,
+  syncManuscriptToWorld,
+  aiGenerateSceneBeats,
+  aiExpandSceneDraft,
+  exportManuscript,
+  saveExportedFile,
+  SyncManuscriptResult,
+  ExportOptions,
+  ExportResult,
 } from '../lib/tauri-commands';
 
 interface VaultState {
@@ -402,12 +410,38 @@ export const useDiffStore = create<DiffState>((set, get) => ({
 
 interface AiState {
   isReviewing: boolean;
+  isGeneratingBeats: boolean;
+  isExpandingDraft: boolean;
   lastError: string | null;
   runReview: (userPrompt: string) => Promise<void>;
+  generateBeats: (vaultPath: string, overallPlot: string, episodeSynopsis: string) => Promise<string | null>;
+  expandDraft: (
+    vaultPath: string,
+    filePath: string,
+    overallPlot: string,
+    episodeSynopsis: string,
+    instruction: string
+  ) => Promise<void>;
+}
+
+function getStoredAiConfig(): AiConfig {
+  const provider = (localStorage.getItem('novel_studio_provider') || 'gemini') as AiProviderType;
+  const apiKey = localStorage.getItem('novel_studio_api_key') || undefined;
+  const model = localStorage.getItem('novel_studio_model') || (provider === 'gemini' ? 'gemini-1.5-pro' : 'gpt-4o');
+  const baseUrl = localStorage.getItem('novel_studio_base_url') || undefined;
+
+  return {
+    provider,
+    model,
+    api_key: apiKey,
+    base_url: baseUrl,
+  };
 }
 
 export const useAiStore = create<AiState>((set) => ({
   isReviewing: false,
+  isGeneratingBeats: false,
+  isExpandingDraft: false,
   lastError: null,
 
   runReview: async (userPrompt: string) => {
@@ -419,18 +453,7 @@ export const useAiStore = create<AiState>((set) => ({
     }
 
     set({ isReviewing: true, lastError: null });
-
-    const provider = (localStorage.getItem('novel_studio_provider') || 'gemini') as AiProviderType;
-    const apiKey = localStorage.getItem('novel_studio_api_key') || undefined;
-    const model = localStorage.getItem('novel_studio_model') || (provider === 'gemini' ? 'gemini-1.5-pro' : 'gpt-4o');
-    const baseUrl = localStorage.getItem('novel_studio_base_url') || undefined;
-
-    const config: AiConfig = {
-      provider,
-      model,
-      api_key: apiKey,
-      base_url: baseUrl,
-    };
+    const config = getStoredAiConfig();
 
     try {
       const result = await aiRunRevision(vaultPath, activeFile, userPrompt, config);
@@ -446,6 +469,46 @@ export const useAiStore = create<AiState>((set) => ({
       console.error('AI Review Error:', e);
     }
   },
+
+  generateBeats: async (vaultPath: string, overallPlot: string, episodeSynopsis: string) => {
+    set({ isGeneratingBeats: true, lastError: null });
+    const config = getStoredAiConfig();
+    try {
+      const beats = await aiGenerateSceneBeats(vaultPath, overallPlot, episodeSynopsis, config);
+      set({ isGeneratingBeats: false });
+      return beats;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      set({ isGeneratingBeats: false, lastError: msg });
+      console.error('AI Generate Beats Error:', e);
+      return null;
+    }
+  },
+
+  expandDraft: async (vaultPath, filePath, overallPlot, episodeSynopsis, instruction) => {
+    set({ isExpandingDraft: true, lastError: null });
+    const config = getStoredAiConfig();
+    try {
+      const result = await aiExpandSceneDraft(
+        vaultPath,
+        filePath,
+        overallPlot,
+        episodeSynopsis,
+        instruction,
+        config
+      );
+      useDiffStore.setState({
+        activeShadowBranch: result.branch_name,
+        diffFiles: result.diffs,
+        isDiffOpen: true,
+      });
+      set({ isExpandingDraft: false });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      set({ isExpandingDraft: false, lastError: msg });
+      console.error('AI Expand Draft Error:', e);
+    }
+  },
 }));
 
 // World Graph Store (Phase 7 GraphRAG & Visual World Studio)
@@ -456,6 +519,8 @@ interface WorldGraphState {
   overallPlot: string;
   notes: string[];
   isLoading: boolean;
+  isSyncingManuscript: boolean;
+  syncResultNotice: string | null;
   loadGraph: (vaultPath: string) => Promise<void>;
   upsertNode: (vaultPath: string, node: WorldNode) => Promise<WorldNode | null>;
   deleteNode: (vaultPath: string, nodeId: string) => Promise<void>;
@@ -469,6 +534,7 @@ interface WorldGraphState {
   readNoteContent: (vaultPath: string, noteName: string) => Promise<string>;
   saveNoteContent: (vaultPath: string, noteName: string, content: string) => Promise<void>;
   syncAllNotes: (vaultPath: string) => Promise<void>;
+  syncManuscriptToWorldAction: (vaultPath: string, text: string) => Promise<SyncManuscriptResult | null>;
 }
 
 export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
@@ -478,6 +544,8 @@ export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
   overallPlot: '',
   notes: [],
   isLoading: false,
+  isSyncingManuscript: false,
+  syncResultNotice: null,
 
   loadGraph: async (vaultPath: string) => {
     set({ isLoading: true });
@@ -608,6 +676,118 @@ export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
   },
 
   setSelectedNodeId: (id: string | null) => set({ selectedNodeId: id }),
+
+  syncManuscriptToWorldAction: async (vaultPath: string, text: string) => {
+    set({ isSyncingManuscript: true, syncResultNotice: null });
+    const config = getStoredAiConfig();
+    try {
+      const result = await syncManuscriptToWorld(
+        vaultPath,
+        text,
+        config.api_key ? config : undefined
+      );
+      set({
+        graphData: result.graph,
+        syncResultNotice: result.message,
+        isSyncingManuscript: false,
+      });
+      // Refresh notes list and sync status
+      get().loadNotesList(vaultPath);
+      useSyncStore.getState().loadStatus(vaultPath);
+      setTimeout(() => {
+        set({ syncResultNotice: null });
+      }, 4000);
+      return result;
+    } catch (e: unknown) {
+      console.error('Failed to sync manuscript to world:', e);
+      set({ isSyncingManuscript: false });
+      return null;
+    }
+  },
+}));
+
+// Export Store (Phase 10 Publication & Web Novel Export Studio)
+interface ExportState {
+  isOpen: boolean;
+  options: ExportOptions;
+  result: ExportResult | null;
+  isLoading: boolean;
+  savedPath: string | null;
+  openExportModal: () => void;
+  closeExportModal: () => void;
+  setFormat: (format: ExportOptions['format']) => void;
+  setIncludeCover: (include_cover: boolean) => void;
+  setIncludeChapterTitles: (include_chapter_titles: boolean) => void;
+  runExport: (vaultPath: string) => Promise<void>;
+  saveToFile: (vaultPath: string, fileName: string, content: string) => Promise<string | null>;
+}
+
+export const useExportStore = create<ExportState>((set, get) => ({
+  isOpen: false,
+  options: {
+    format: 'submission_txt',
+    include_cover: true,
+    include_chapter_titles: true,
+  },
+  result: null,
+  isLoading: false,
+  savedPath: null,
+
+  openExportModal: () => {
+    set({ isOpen: true, savedPath: null });
+    const vaultPath = useVaultStore.getState().vaultPath;
+    if (vaultPath) {
+      get().runExport(vaultPath);
+    }
+  },
+
+  closeExportModal: () => set({ isOpen: false }),
+
+  setFormat: (format) => {
+    set((state) => ({ options: { ...state.options, format } }));
+    const vaultPath = useVaultStore.getState().vaultPath;
+    if (vaultPath) {
+      get().runExport(vaultPath);
+    }
+  },
+
+  setIncludeCover: (include_cover) => {
+    set((state) => ({ options: { ...state.options, include_cover } }));
+    const vaultPath = useVaultStore.getState().vaultPath;
+    if (vaultPath) {
+      get().runExport(vaultPath);
+    }
+  },
+
+  setIncludeChapterTitles: (include_chapter_titles) => {
+    set((state) => ({ options: { ...state.options, include_chapter_titles } }));
+    const vaultPath = useVaultStore.getState().vaultPath;
+    if (vaultPath) {
+      get().runExport(vaultPath);
+    }
+  },
+
+  runExport: async (vaultPath: string) => {
+    set({ isLoading: true, savedPath: null });
+    try {
+      const res = await exportManuscript(vaultPath, get().options);
+      set({ result: res, isLoading: false });
+    } catch (e) {
+      console.error('Failed to export manuscript:', e);
+      set({ isLoading: false });
+    }
+  },
+
+  saveToFile: async (vaultPath: string, fileName: string, content: string) => {
+    try {
+      const path = await saveExportedFile(vaultPath, fileName, content);
+      set({ savedPath: path });
+      return path;
+    } catch (e) {
+      console.error('Failed to save export file:', e);
+      return null;
+    }
+  },
 }));
 
 // Auto-Sync Store (Phase 7 Zero-Touch Cloud Sync)

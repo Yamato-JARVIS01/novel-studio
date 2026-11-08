@@ -63,6 +63,16 @@ pub struct SceneGraphAnalysis {
     pub consistency_hints: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncManuscriptResult {
+    pub added_nodes_count: usize,
+    pub added_edges_count: usize,
+    pub added_nodes: Vec<WorldNode>,
+    pub added_edges: Vec<WorldEdge>,
+    pub message: String,
+    pub graph: GraphData,
+}
+
 pub struct KuzuGraphEngine {
     pub vault_path: PathBuf,
     graph_file_path: PathBuf,
@@ -1028,6 +1038,292 @@ impl KuzuGraphEngine {
             consistency_hints,
         })
     }
+
+    /// Autonomous bi-directional extraction from manuscript back to notes & graph DB
+    pub async fn sync_manuscript_to_world(
+        &self,
+        manuscript_text: &str,
+        config: Option<&crate::ai::provider::AiConfig>,
+    ) -> Result<SyncManuscriptResult, WorldGraphError> {
+        self.ensure_initialized()?;
+        let current_graph = self.get_graph()?;
+
+        // Known names and aliases for fast lookup
+        let mut known_names: HashSet<String> = HashSet::new();
+        for node in &current_graph.nodes {
+            known_names.insert(node.name.clone());
+            for alias in &node.aliases {
+                known_names.insert(alias.clone());
+            }
+        }
+
+        let mut candidate_nodes: Vec<WorldNode> = Vec::new();
+        let mut candidate_edges: Vec<WorldEdge> = Vec::new();
+        let now = Utc::now().to_rfc3339();
+
+        // 1. Local Heuristic Extraction
+        // (a) Ruby extractor: ｜親文字《ルビ》 or 漢字《ルビ》
+        let ruby_regex = regex::Regex::new(r"(?:｜([^\n《》]{1,20})|([一-龠々〆ヵヶ]{1,20}))《([^\n《》]{1,30})》").unwrap();
+        for cap in ruby_regex.captures_iter(manuscript_text) {
+            let parent = cap.get(1).or_else(|| cap.get(2)).map(|m| m.as_str().trim()).unwrap_or("");
+            let reading = cap.get(3).map(|m| m.as_str().trim()).unwrap_or("");
+            if !parent.is_empty() && !known_names.contains(parent) && !candidate_nodes.iter().any(|n| n.name == parent) {
+                let mut attrs = HashMap::new();
+                if !reading.is_empty() {
+                    attrs.insert("読み".to_string(), reading.to_string());
+                }
+                candidate_nodes.push(WorldNode {
+                    id: format!("node-{}", Uuid::new_v4()),
+                    node_type: "term".to_string(),
+                    name: parent.to_string(),
+                    aliases: if reading.is_empty() { Vec::new() } else { vec![reading.to_string()] },
+                    summary: format!("原稿内でルビ表記「{}（{}）」として初出。", parent, reading),
+                    attributes: attrs,
+                    full_text: format!("## {}\n- 種別: term\n- 別名: {}\n\n原稿より自動抽出された世界観用語。", parent, reading),
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                });
+            }
+        }
+
+        // (b) Speaker / Dialogue heuristic:
+        // Match expressions like: 〇〇[はが]...「...」 or 〇〇が叫んだ。「
+        let dialogue_regex = regex::Regex::new(r#"(?:^|[\n。！？、\s])([^\n\r。！？、\s「」]{2,8})[はが][^「」\n\r]{0,15}「"#).unwrap();
+        let common_stop_words: HashSet<&str> = [
+            "彼", "彼女", "自分", "おれ", "私", "僕", "誰か", "男", "女", "声", "誰", "相手",
+            "その者", "何者", "二人", "人々", "全員", "やつ", "奴", "者", "誰しも"
+        ].into_iter().collect();
+
+        for cap in dialogue_regex.captures_iter(manuscript_text) {
+            if let Some(m) = cap.get(1) {
+                let speaker = m.as_str().trim();
+                if speaker.chars().count() >= 2
+                    && !common_stop_words.contains(speaker)
+                    && !known_names.contains(speaker)
+                    && !candidate_nodes.iter().any(|n| n.name == speaker)
+                    && !speaker.contains("こと")
+                    && !speaker.contains("もの")
+                {
+                    candidate_nodes.push(WorldNode {
+                        id: format!("node-{}", Uuid::new_v4()),
+                        node_type: "character".to_string(),
+                        name: speaker.to_string(),
+                        aliases: Vec::new(),
+                        summary: format!("原稿の発言箇所「{}は……「」」より新登場人物として自動検出。", speaker),
+                        attributes: HashMap::new(),
+                        full_text: format!("## {}\n- 種別: character\n\n原稿より自動検出された登場人物。", speaker),
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                    });
+                }
+            }
+        }
+
+        // 2. AI Extraction if config is provided
+        if let Some(ai_cfg) = config {
+            let existing_names_str = current_graph.nodes.iter().map(|n| n.name.as_str()).collect::<Vec<_>>().join(", ");
+            let system_prompt = format!(
+                r#"あなたは小説の自律設定解析エンジンです。原稿から新しく登場した人物、世界観用語、舞台、プロット伏線、および人物同士の相関関係を抽出し、以下のJSON形式厳守で出力してください。Markdownコードブロック ```json ... ``` のみを出力してください。
+すでに登録済みの設定要素（以下）は重複登録せず、未知の新規要素または新しい関係性のみを抽出してください。
+【既登録要素】: {}
+
+スキーマ:
+{{
+  "nodes": [
+    {{
+      "node_type": "character" | "term" | "location" | "plot",
+      "name": "エンティティ名",
+      "aliases": ["別名1"],
+      "summary": "1行の簡潔な要約",
+      "attributes": {{ "キー": "値" }},
+      "full_text": "詳細情報"
+    }}
+  ],
+  "edges": [
+    {{
+      "source_name": "起点エンティティ名",
+      "target_name": "終点エンティティ名",
+      "relation_type": "関係種別",
+      "description": "補足"
+    }}
+  ]
+}}"#,
+                existing_names_str
+            );
+
+            let provider = crate::ai::provider::AiProvider::new();
+            if let Ok(ai_res) = provider.request_review(ai_cfg, &system_prompt, manuscript_text).await {
+                let json_str = if let Some(start) = ai_res.find("```json") {
+                    let after = &ai_res[start + 7..];
+                    if let Some(end) = after.find("```") {
+                        &after[..end]
+                    } else {
+                        after
+                    }
+                } else if let Some(start) = ai_res.find("```") {
+                    let after = &ai_res[start + 3..];
+                    if let Some(end) = after.find("```") {
+                        &after[..end]
+                    } else {
+                        after
+                    }
+                } else {
+                    &ai_res
+                };
+
+                #[derive(Deserialize)]
+                struct ExtractedAiItem {
+                    pub node_type: String,
+                    pub name: String,
+                    #[serde(default)]
+                    pub aliases: Vec<String>,
+                    #[serde(default)]
+                    pub summary: String,
+                    #[serde(default)]
+                    pub attributes: HashMap<String, String>,
+                    #[serde(default)]
+                    pub full_text: String,
+                }
+
+                #[derive(Deserialize)]
+                struct ExtractedAiRelation {
+                    pub source_name: String,
+                    pub target_name: String,
+                    pub relation_type: String,
+                    #[serde(default)]
+                    pub description: String,
+                }
+
+                #[derive(Deserialize)]
+                struct AiExtracted {
+                    #[serde(default)]
+                    nodes: Vec<ExtractedAiItem>,
+                    #[serde(default)]
+                    edges: Vec<ExtractedAiRelation>,
+                }
+
+                if let Ok(parsed) = serde_json::from_str::<AiExtracted>(json_str.trim()) {
+                    for n in parsed.nodes {
+                        if !known_names.contains(&n.name) && !candidate_nodes.iter().any(|ex| ex.name == n.name) {
+                            candidate_nodes.push(WorldNode {
+                                id: format!("node-{}", Uuid::new_v4()),
+                                node_type: n.node_type,
+                                name: n.name,
+                                aliases: n.aliases,
+                                summary: n.summary,
+                                attributes: n.attributes,
+                                full_text: n.full_text,
+                                created_at: now.clone(),
+                                updated_at: now.clone(),
+                            });
+                        }
+                    }
+                    for e in parsed.edges {
+                        candidate_edges.push(WorldEdge {
+                            id: format!("edge-{}", Uuid::new_v4()),
+                            source_id: e.source_name,
+                            target_id: e.target_name,
+                            relation_type: e.relation_type,
+                            description: e.description,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 3. Write back to note markdown files in .novelstudio/notes/
+        let notes_dir = self.notes_dir();
+        for node in &candidate_nodes {
+            let note_filename = match node.node_type.as_str() {
+                "character" => "characters.md",
+                "location" => "locations.md",
+                "plot" => "plot.md",
+                _ => "world_terms.md",
+            };
+            let note_path = notes_dir.join(note_filename);
+
+            let mut append_content = String::new();
+            append_content.push_str(&format!("\n\n## {}\n- 種別: {}\n", node.name, node.node_type));
+            if !node.aliases.is_empty() {
+                append_content.push_str(&format!("- 別名: {}\n", node.aliases.join(", ")));
+            }
+            for (k, v) in &node.attributes {
+                append_content.push_str(&format!("- {}: {}\n", k, v));
+            }
+            append_content.push('\n');
+            if !node.summary.is_empty() {
+                append_content.push_str(&node.summary);
+                append_content.push('\n');
+            }
+
+            // Append or create
+            if note_path.exists() {
+                let existing = fs::read_to_string(&note_path).unwrap_or_default();
+                if !existing.contains(&format!("## {}", node.name)) {
+                    let mut file = fs::OpenOptions::new().append(true).open(&note_path)?;
+                    use std::io::Write;
+                    file.write_all(append_content.as_bytes())?;
+                }
+            } else {
+                let header = match node.node_type.as_str() {
+                    "character" => "# 登場人物ノート\n",
+                    "location" => "# 世界観・舞台設定ノート\n",
+                    "plot" => "# 全体筋書き・プロット構成\n",
+                    _ => "# 世界観・用語ノート\n",
+                };
+                let full = format!("{}{}", header, append_content);
+                fs::write(&note_path, full)?;
+            }
+        }
+
+        // 4. Synchronize notes to graph
+        let mut updated_graph = self.sync_notes_to_graph()?;
+
+        // 5. Connect candidate edges if any
+        let mut actual_added_edges = Vec::new();
+        for edge in candidate_edges {
+            let src_id = updated_graph.nodes.iter().find(|n| n.name == edge.source_id || n.id == edge.source_id).map(|n| n.id.clone());
+            let tgt_id = updated_graph.nodes.iter().find(|n| n.name == edge.target_id || n.id == edge.target_id).map(|n| n.id.clone());
+            if let (Some(s), Some(t)) = (src_id, tgt_id) {
+                if s != t {
+                    let exists = updated_graph.edges.iter().any(|e| (e.source_id == s && e.target_id == t) || (e.source_id == t && e.target_id == s));
+                    if !exists {
+                        let new_edge = WorldEdge {
+                            id: format!("edge-{}", Uuid::new_v4()),
+                            source_id: s,
+                            target_id: t,
+                            relation_type: edge.relation_type,
+                            description: edge.description,
+                        };
+                        updated_graph.edges.push(new_edge.clone());
+                        actual_added_edges.push(new_edge);
+                    }
+                }
+            }
+        }
+
+        if !actual_added_edges.is_empty() {
+            self.save_graph_atomic(&updated_graph)?;
+        }
+
+        let added_nodes_count = candidate_nodes.len();
+        let added_edges_count = actual_added_edges.len();
+        let total_count = added_nodes_count + added_edges_count;
+        let message = if total_count > 0 {
+            format!("新規設定{}件（人物・用語{}件、相関{}件）をノートとグラフに自動反映しました", total_count, added_nodes_count, added_edges_count)
+        } else {
+            "新規設定は検出されませんでした（すべての固有名詞・設定は登録済みです）".to_string()
+        };
+
+        Ok(SyncManuscriptResult {
+            added_nodes_count,
+            added_edges_count,
+            added_nodes: candidate_nodes,
+            added_edges: actual_added_edges,
+            message,
+            graph: updated_graph,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1159,5 +1455,30 @@ mod tests {
         engine.save_overall_plot("# 全体プロット\n\n## クライマックス\n- 種別: plot\n下人の行方は誰も知らない。").unwrap();
         let updated_plot = engine.get_overall_plot().unwrap();
         assert!(updated_plot.contains("クライマックス"));
+    }
+
+    #[tokio::test]
+    async fn test_sync_manuscript_to_world_heuristic() {
+        let dir = tempdir().unwrap();
+        let engine = KuzuGraphEngine::new(dir.path());
+        engine.ensure_initialized().unwrap();
+
+        let manuscript = r#"
+雨は依然として止む気配がなかった。
+そんな折、従者修験が叫んだ。「門の下に誰かおりますぞ！」
+下人は刀の柄に手をかけた。懐には先ほど拾った｜霊験符《れいげんふ》が隠されている。
+"#;
+
+        let result = engine.sync_manuscript_to_world(manuscript, None).await.unwrap();
+        assert!(result.added_nodes_count >= 2);
+        assert!(result.added_nodes.iter().any(|n| n.name == "従者修験" && n.node_type == "character"));
+        assert!(result.added_nodes.iter().any(|n| n.name == "霊験符" && n.node_type == "term"));
+
+        // Check if characters.md and world_terms.md were updated
+        let char_note = engine.read_note("characters.md").unwrap();
+        assert!(char_note.contains("従者修験"));
+
+        let term_note = engine.read_note("world_terms.md").unwrap();
+        assert!(term_note.contains("霊験符"));
     }
 }
