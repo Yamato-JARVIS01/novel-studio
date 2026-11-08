@@ -33,6 +33,8 @@ pub struct WorldNode {
     #[serde(default)]
     pub attributes: HashMap<String, String>,
     #[serde(default)]
+    pub full_text: String,
+    #[serde(default)]
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
@@ -76,11 +78,80 @@ impl KuzuGraphEngine {
         }
     }
 
+    pub fn notes_dir(&self) -> PathBuf {
+        self.vault_path.join(".novelstudio").join("notes")
+    }
+
     /// Ensure directory and file exists, creating sample data if completely empty
-    fn ensure_initialized(&self) -> Result<(), WorldGraphError> {
+    pub fn ensure_initialized(&self) -> Result<(), WorldGraphError> {
         let parent = self.graph_file_path.parent().unwrap();
         if !parent.exists() {
             fs::create_dir_all(parent)?;
+        }
+
+        let notes_dir = self.notes_dir();
+        if !notes_dir.exists() {
+            fs::create_dir_all(&notes_dir)?;
+        }
+
+        // Initialize sample notes if empty
+        let char_note = notes_dir.join("characters.md");
+        if !char_note.exists() {
+            let sample_char = r#"# 登場人物ノート
+
+## 下人
+- 種別: character
+- 別名: 男, 若者
+- 一人称: おれ
+- 二人称: おのれ、お前
+- 口調: 荒削りで焦燥感がある
+- 状況: 数日前に主人から暇を出された
+- 関係: 老婆 (対峙・追剥ぎ)
+
+行き場を失い飢え死にか盗人になるかの選択に苦悩する元使用人。羅生門で雨宿りをしていたが、死人の髪を抜く老婆と出会い、生きるための悪に目覚める。
+
+## 老婆
+- 種別: character
+- 別名: 白髪の老婆, 女
+- 一人称: わし
+- 二人称: お前さん
+- 口調: 嗄れ声で弁明がましい
+- 動機: 死人の髪を抜いて鬘にして生き延びる
+- 関係: 下人 (対峙・追剥ぎ)
+
+羅生門の楼上で死骸の髪を抜き、生きるための悪行を正当化する老婆。
+"#;
+            let _ = fs::write(char_note, sample_char);
+        }
+
+        let loc_note = notes_dir.join("locations.md");
+        if !loc_note.exists() {
+            let sample_loc = r#"# 世界観・舞台設定ノート
+
+## 羅生門
+- 種別: location
+- 別名: 門, 楼上
+- 状態: 荒廃、死体捨て場と化している
+- 天気: 降りしきる夕方の雨
+
+平安京の正門。荒廃し、狐狸や盗人が住みつき死骸が打ち捨てられている場所。
+"#;
+            let _ = fs::write(loc_note, sample_loc);
+        }
+
+        let plot_note = notes_dir.join("plot.md");
+        if !plot_note.exists() {
+            let sample_plot = r#"# 全体筋書き・プロット構成
+
+## 悪への転向
+- 種別: plot
+- テーマ: 生存のための悪の肯定
+- 結末: 下人が老婆の着物を剥ぎ取り闇へと消える
+- 関連: [[下人]] (契機), [[老婆]] (契機)
+
+老婆の弁明（生きるための悪）を聞き、下人が善悪の迷いを捨てて追剥ぎになる転換点。
+"#;
+            let _ = fs::write(plot_note, sample_plot);
         }
 
         if !self.graph_file_path.exists() {
@@ -107,6 +178,7 @@ impl KuzuGraphEngine {
             aliases: vec!["男".to_string(), "若者".to_string()],
             summary: "行き場を失い飢え死にか盗人になるかの選択に苦悩する元使用人。".to_string(),
             attributes: genin_attrs,
+            full_text: "## 下人\n- 一人称: おれ\n- 二人称: おのれ、お前\n- 口調: 荒削りで焦燥感がある\n- 状況: 数日前に主人から暇を出された\n- 関係: 老婆 (対峙・追剥ぎ)\n\n行き場を失い飢え死にか盗人になるかの選択に苦悩する元使用人。羅生門で雨宿りをしていたが、死人の髪を抜く老婆と出会い、生きるための悪に目覚める。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
         };
@@ -124,6 +196,7 @@ impl KuzuGraphEngine {
             aliases: vec!["白髪の老婆".to_string(), "女".to_string()],
             summary: "羅生門の楼上で死骸の髪を抜き、生きるための悪行を正当化する老婆。".to_string(),
             attributes: rousen_attrs,
+            full_text: "## 老婆\n- 一人称: わし\n- 二人称: お前さん\n- 口調: 嗄れ声で弁明がましい\n- 動機: 死人の髪を抜いて鬘にして生き延びる\n\n羅生門の楼上で死骸の髪を抜き、生きるための悪行を正当化する老婆。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
         };
@@ -139,6 +212,7 @@ impl KuzuGraphEngine {
             aliases: vec!["門".to_string(), "楼上".to_string()],
             summary: "平安京の正門。荒廃し、狐狸や盗人が住みつき死骸が打ち捨てられている場所。".to_string(),
             attributes: gate_attrs,
+            full_text: "## 羅生門\n- 状態: 荒廃、死体捨て場と化している\n- 天気: 降りしきる夕方の雨\n\n平安京の正門。荒廃し、狐狸や盗人が住みつき死骸が打ち捨てられている場所。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
         };
@@ -154,6 +228,7 @@ impl KuzuGraphEngine {
             aliases: vec!["追剥ぎの決断".to_string()],
             summary: "老婆の弁明（生きるための悪）を聞き、下人が善悪の迷いを捨てて追剥ぎになる転換点。".to_string(),
             attributes: plot_attrs,
+            full_text: "## 悪への転向\n- テーマ: 生存のための悪の肯定\n- 結末: 下人が老婆の着物を剥ぎ取り闇へと消える\n\n老婆の弁明（生きるための悪）を聞き、下人が善悪の迷いを捨てて追剥ぎになる転換点。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
         };
@@ -194,6 +269,450 @@ impl KuzuGraphEngine {
         let content = fs::read_to_string(&self.graph_file_path)?;
         let data: GraphData = serde_json::from_str(&content)?;
         Ok(data)
+    }
+
+    /// List all note files in .novelstudio/notes/
+    pub fn list_notes(&self) -> Result<Vec<String>, WorldGraphError> {
+        self.ensure_initialized()?;
+        let notes_dir = self.notes_dir();
+        let mut results = Vec::new();
+        if notes_dir.exists() {
+            for entry in fs::read_dir(notes_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                    if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                        results.push(file_name.to_string());
+                    }
+                }
+            }
+        }
+        results.sort();
+        Ok(results)
+    }
+
+    /// Read single note file
+    pub fn read_note(&self, note_name: &str) -> Result<String, WorldGraphError> {
+        self.ensure_initialized()?;
+        let path = self.notes_dir().join(note_name);
+        if !path.exists() {
+            return Ok(String::new());
+        }
+        let content = fs::read_to_string(path)?;
+        Ok(content)
+    }
+
+    /// Save note file and immediately trigger autonomous graph sync
+    pub fn save_note(&self, note_name: &str, content: &str) -> Result<GraphData, WorldGraphError> {
+        self.ensure_initialized()?;
+        let path = self.notes_dir().join(note_name);
+        fs::write(path, content)?;
+        self.sync_notes_to_graph()
+    }
+
+    /// Get overall plot markdown
+    pub fn get_overall_plot(&self) -> Result<String, WorldGraphError> {
+        self.ensure_initialized()?;
+        let path = self.notes_dir().join("plot.md");
+        if path.exists() {
+            fs::read_to_string(path).map_err(WorldGraphError::Io)
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    /// Save overall plot markdown and trigger graph sync
+    pub fn save_overall_plot(&self, plot: &str) -> Result<GraphData, WorldGraphError> {
+        self.ensure_initialized()?;
+        let path = self.notes_dir().join("plot.md");
+        fs::write(path, plot)?;
+        self.sync_notes_to_graph()
+    }
+
+    /// Parse long-form notes and autonomously synchronize World Graph nodes & edges
+    pub fn sync_notes_to_graph(&self) -> Result<GraphData, WorldGraphError> {
+        self.ensure_initialized()?;
+        let mut current_graph = self.get_graph().unwrap_or_default();
+        let notes = self.list_notes()?;
+
+        struct ParsedRelation {
+            source_name: String,
+            target_name: String,
+            relation_type: String,
+            description: String,
+        }
+
+        let mut extracted_nodes = Vec::new();
+        let mut extracted_relations = Vec::new();
+
+        for note_file in &notes {
+            let note_path = self.notes_dir().join(note_file);
+            let content = match fs::read_to_string(&note_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let default_type = if note_file.contains("character") || note_file.contains("人物") {
+                "character"
+            } else if note_file.contains("location") || note_file.contains("舞台") || note_file.contains("場所") {
+                "location"
+            } else if note_file.contains("plot") || note_file.contains("筋書き") || note_file.contains("構成") {
+                "plot"
+            } else {
+                "term"
+            };
+
+            let lines: Vec<&str> = content.lines().collect();
+            let mut current_section_name: Option<String> = None;
+            let mut current_section_type = default_type.to_string();
+            let mut current_section_lines: Vec<&str> = Vec::new();
+
+            let flush_section = |
+                sec_name: Option<String>,
+                sec_type: &str,
+                sec_lines: &[&str],
+                extracted_nodes: &mut Vec<WorldNode>,
+                extracted_relations: &mut Vec<ParsedRelation>,
+            | {
+                if let Some(raw_name) = sec_name {
+                    let name = raw_name.trim();
+                    if name.is_empty() || name == "登場人物ノート" || name == "世界観・舞台設定ノート" || name == "全体筋書き・プロット構成" {
+                        return;
+                    }
+
+                    let mut node_type = sec_type.to_string();
+                    let mut aliases = Vec::new();
+                    let mut attributes = HashMap::new();
+                    let mut summary_lines = Vec::new();
+
+                    for line in sec_lines {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with('-') || trimmed.starts_with('*') {
+                            let item = trimmed.trim_start_matches(|c| c == '-' || c == '*' || c == ' ');
+                            if let Some((k, v)) = item.split_once(':').or_else(|| item.split_once('：')) {
+                                let key = k.trim();
+                                let val = v.trim();
+                                match key {
+                                    "種別" | "タイプ" | "type" => {
+                                        node_type = val.to_string();
+                                    }
+                                    "別名" | "エイリアス" | "aliases" => {
+                                        for a in val.split(|c| c == ',' || c == '、') {
+                                            let at = a.trim();
+                                            if !at.is_empty() {
+                                                aliases.push(at.to_string());
+                                            }
+                                        }
+                                    }
+                                    "関係" | "相関" | "関連" | "relation" => {
+                                        let clean_val = val.replace("[[", "").replace("]]", "");
+                                        if let Some((target, rel)) = clean_val.split_once('(').or_else(|| clean_val.split_once('（')) {
+                                            let rel_clean = rel.trim_end_matches(|c| c == ')' || c == '）').trim();
+                                            extracted_relations.push(ParsedRelation {
+                                                source_name: name.to_string(),
+                                                target_name: target.trim().to_string(),
+                                                relation_type: if rel_clean.is_empty() { "関連".to_string() } else { rel_clean.to_string() },
+                                                description: format!("ノート「{}」より抽出", note_file),
+                                            });
+                                        } else {
+                                            extracted_relations.push(ParsedRelation {
+                                                source_name: name.to_string(),
+                                                target_name: clean_val.trim().to_string(),
+                                                relation_type: "関連".to_string(),
+                                                description: format!("ノート「{}」より抽出", note_file),
+                                            });
+                                        }
+                                    }
+                                    _ => {
+                                        attributes.insert(key.to_string(), val.to_string());
+                                    }
+                                }
+                            }
+                        } else if !trimmed.is_empty() {
+                            summary_lines.push(trimmed);
+                            let mut start_idx = 0;
+                            while let Some(open) = trimmed[start_idx..].find("[[") {
+                                let abs_open = start_idx + open + 2;
+                                if let Some(close) = trimmed[abs_open..].find("]]") {
+                                    let linked_name = &trimmed[abs_open..abs_open + close];
+                                    if !linked_name.is_empty() && linked_name != name {
+                                        extracted_relations.push(ParsedRelation {
+                                            source_name: name.to_string(),
+                                            target_name: linked_name.trim().to_string(),
+                                            relation_type: "言及".to_string(),
+                                            description: "本文中リンク".to_string(),
+                                        });
+                                    }
+                                    start_idx = abs_open + close + 2;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    let summary = summary_lines.first().cloned().unwrap_or("").to_string();
+                    let full_text = sec_lines.join("\n");
+
+                    extracted_nodes.push(WorldNode {
+                        id: String::new(),
+                        node_type,
+                        name: name.to_string(),
+                        aliases,
+                        summary,
+                        attributes,
+                        full_text,
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                    });
+                }
+            };
+
+            for line in lines {
+                let trimmed = line.trim();
+                if trimmed.starts_with("## ") {
+                    flush_section(
+                        current_section_name.take(),
+                        &current_section_type,
+                        &current_section_lines,
+                        &mut extracted_nodes,
+                        &mut extracted_relations,
+                    );
+                    current_section_lines.clear();
+                    let raw_heading = trimmed[3..].trim();
+                    if raw_heading.starts_with('[') {
+                        if let Some(close_bracket) = raw_heading.find(']') {
+                            let tag = &raw_heading[1..close_bracket];
+                            current_section_type = match tag {
+                                "人物" | "character" => "character".to_string(),
+                                "舞台" | "場所" | "location" => "location".to_string(),
+                                "プロット" | "筋書き" | "plot" => "plot".to_string(),
+                                _ => "term".to_string(),
+                            };
+                            current_section_name = Some(raw_heading[close_bracket + 1..].trim().to_string());
+                        } else {
+                            current_section_name = Some(raw_heading.to_string());
+                        }
+                    } else {
+                        current_section_name = Some(raw_heading.to_string());
+                    }
+                } else if trimmed.starts_with("# ") && current_section_name.is_none() {
+                    let raw_heading = trimmed[2..].trim();
+                    if raw_heading != "登場人物ノート" && raw_heading != "世界観・舞台設定ノート" && raw_heading != "全体筋書き・プロット構成" {
+                        current_section_name = Some(raw_heading.to_string());
+                    }
+                } else {
+                    current_section_lines.push(line);
+                }
+            }
+
+            flush_section(
+                current_section_name.take(),
+                &current_section_type,
+                &current_section_lines,
+                &mut extracted_nodes,
+                &mut extracted_relations,
+            );
+        }
+
+        let now = Utc::now().to_rfc3339();
+
+        for mut extracted in extracted_nodes {
+            if let Some(existing) = current_graph.nodes.iter_mut().find(|n| n.name == extracted.name) {
+                existing.node_type = extracted.node_type;
+                if !extracted.aliases.is_empty() {
+                    existing.aliases = extracted.aliases;
+                }
+                if !extracted.summary.is_empty() {
+                    existing.summary = extracted.summary;
+                }
+                for (k, v) in extracted.attributes {
+                    existing.attributes.insert(k, v);
+                }
+                if !extracted.full_text.is_empty() {
+                    existing.full_text = extracted.full_text;
+                }
+                existing.updated_at = now.clone();
+            } else {
+                extracted.id = format!("node-{}", Uuid::new_v4());
+                extracted.created_at = now.clone();
+                extracted.updated_at = now.clone();
+                current_graph.nodes.push(extracted);
+            }
+        }
+
+        for rel in extracted_relations {
+            let source_id = current_graph.nodes.iter().find(|n| n.name == rel.source_name || n.aliases.contains(&rel.source_name)).map(|n| n.id.clone());
+            let target_id = current_graph.nodes.iter().find(|n| n.name == rel.target_name || n.aliases.contains(&rel.target_name)).map(|n| n.id.clone());
+
+            if let (Some(s_id), Some(t_id)) = (source_id, target_id) {
+                if s_id != t_id {
+                    let exists = current_graph.edges.iter().any(|e| {
+                        (e.source_id == s_id && e.target_id == t_id && e.relation_type == rel.relation_type)
+                            || (e.source_id == t_id && e.target_id == s_id && e.relation_type == rel.relation_type)
+                    });
+                    if !exists {
+                        current_graph.edges.push(WorldEdge {
+                            id: format!("edge-{}", Uuid::new_v4()),
+                            source_id: s_id,
+                            target_id: t_id,
+                            relation_type: rel.relation_type,
+                            description: rel.description,
+                        });
+                    }
+                }
+            }
+        }
+
+        self.save_graph_atomic(&current_graph)?;
+        Ok(current_graph)
+    }
+
+    /// Autonomous Graph Extraction using AI LLM
+    pub async fn extract_graph_with_ai(
+        &self,
+        text: &str,
+        config: &crate::ai::provider::AiConfig,
+    ) -> Result<GraphData, WorldGraphError> {
+        let system_prompt = r#"あなたは小説の構造解析エンジンです。与えられた設定資料または原稿テキストから、登場人物、世界観ルール・用語、舞台・場所、プロット（筋書き・伏線）とそれらの相関関係を抽出し、以下のJSONスキーマ厳守で出力してください。Markdownのコードブロック ```json ... ``` のみを出力してください。
+
+スキーマ:
+{
+  "nodes": [
+    {
+      "node_type": "character" | "term" | "location" | "plot",
+      "name": "エンティティ名",
+      "aliases": ["別名1", "別名2"],
+      "summary": "1行の簡潔な要約",
+      "attributes": { "キー": "値" },
+      "full_text": "詳細な記述"
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "起点エンティティ名",
+      "target_name": "終点エンティティ名",
+      "relation_type": "師弟 | 敵対 | 滞在 | 契機 | 秘密 etc.",
+      "description": "関係性の補足"
+    }
+  ]
+}"#;
+
+        let provider = crate::ai::provider::AiProvider::new();
+        let ai_response = provider
+            .request_review(config, system_prompt, text)
+            .await
+            .map_err(|e| WorldGraphError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+
+        let json_str = if let Some(start) = ai_response.find("```json") {
+            let after = &ai_response[start + 7..];
+            if let Some(end) = after.find("```") {
+                &after[..end]
+            } else {
+                after
+            }
+        } else if let Some(start) = ai_response.find("```") {
+            let after = &ai_response[start + 3..];
+            if let Some(end) = after.find("```") {
+                &after[..end]
+            } else {
+                after
+            }
+        } else {
+            &ai_response
+        };
+
+        #[derive(Deserialize)]
+        struct ExtractedAiNode {
+            pub node_type: String,
+            pub name: String,
+            #[serde(default)]
+            pub aliases: Vec<String>,
+            #[serde(default)]
+            pub summary: String,
+            #[serde(default)]
+            pub attributes: HashMap<String, String>,
+            #[serde(default)]
+            pub full_text: String,
+        }
+
+        #[derive(Deserialize)]
+        struct ExtractedAiEdge {
+            pub source_name: String,
+            pub target_name: String,
+            pub relation_type: String,
+            #[serde(default)]
+            pub description: String,
+        }
+
+        #[derive(Deserialize)]
+        struct ExtractedAiGraph {
+            #[serde(default)]
+            pub nodes: Vec<ExtractedAiNode>,
+            #[serde(default)]
+            pub edges: Vec<ExtractedAiEdge>,
+        }
+
+        let parsed: ExtractedAiGraph = serde_json::from_str(json_str.trim())
+            .map_err(WorldGraphError::Json)?;
+
+        let mut current_graph = self.get_graph().unwrap_or_default();
+        let now = Utc::now().to_rfc3339();
+
+        for n in parsed.nodes {
+            if let Some(existing) = current_graph.nodes.iter_mut().find(|ex| ex.name == n.name) {
+                existing.node_type = n.node_type;
+                if !n.aliases.is_empty() {
+                    existing.aliases = n.aliases;
+                }
+                if !n.summary.is_empty() {
+                    existing.summary = n.summary;
+                }
+                for (k, v) in n.attributes {
+                    existing.attributes.insert(k, v);
+                }
+                if !n.full_text.is_empty() {
+                    existing.full_text = n.full_text;
+                }
+                existing.updated_at = now.clone();
+            } else {
+                current_graph.nodes.push(WorldNode {
+                    id: format!("node-{}", Uuid::new_v4()),
+                    node_type: n.node_type,
+                    name: n.name,
+                    aliases: n.aliases,
+                    summary: n.summary,
+                    attributes: n.attributes,
+                    full_text: n.full_text,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                });
+            }
+        }
+
+        for e in parsed.edges {
+            let s_id = current_graph.nodes.iter().find(|n| n.name == e.source_name).map(|n| n.id.clone());
+            let t_id = current_graph.nodes.iter().find(|n| n.name == e.target_name).map(|n| n.id.clone());
+            if let (Some(source_id), Some(target_id)) = (s_id, t_id) {
+                if source_id != target_id {
+                    let exists = current_graph.edges.iter().any(|edge| {
+                        edge.source_id == source_id && edge.target_id == target_id && edge.relation_type == e.relation_type
+                    });
+                    if !exists {
+                        current_graph.edges.push(WorldEdge {
+                            id: format!("edge-{}", Uuid::new_v4()),
+                            source_id,
+                            target_id,
+                            relation_type: e.relation_type,
+                            description: e.description,
+                        });
+                    }
+                }
+            }
+        }
+
+        self.save_graph_atomic(&current_graph)?;
+        Ok(current_graph)
     }
 
     /// Atomically save graph data (.tmp -> rename)
@@ -534,6 +1053,7 @@ mod tests {
             aliases: vec!["謎の女".to_string()],
             summary: "雨宿りに駆け込んできた高貴な女性".to_string(),
             attributes: HashMap::new(),
+            full_text: "雨宿りに駆け込んできた高貴な女性。".to_string(),
             created_at: "".to_string(),
             updated_at: "".to_string(),
         };
@@ -593,5 +1113,51 @@ mod tests {
         assert_eq!(analysis.active_nodes.len(), 2);
         assert_eq!(analysis.active_edges.len(), 1);
         assert!(analysis.consistency_hints.iter().any(|h| h.contains("一人称確認")));
+    }
+
+    #[test]
+    fn test_notes_and_sync_to_graph() {
+        let dir = tempdir().unwrap();
+        let engine = KuzuGraphEngine::new(dir.path());
+        engine.ensure_initialized().unwrap();
+
+        // 1. Initial notes exist
+        let notes = engine.list_notes().unwrap();
+        assert!(notes.contains(&"characters.md".to_string()));
+        assert!(notes.contains(&"locations.md".to_string()));
+        assert!(notes.contains(&"plot.md".to_string()));
+
+        // 2. Read note
+        let char_content = engine.read_note("characters.md").unwrap();
+        assert!(char_content.contains("下人"));
+
+        // 3. Save a new note and check auto graph sync
+        let custom_note = r#"# 新規設定ノート
+
+## 盗賊頭領
+- 種別: character
+- 別名: 黒頭巾の男
+- 口調: 威圧的で冷酷
+- 関係: [[下人]] (追跡)
+
+京洛の辻を騒がす盗賊一味の頭領。
+"#;
+        let synced = engine.save_note("thief.md", custom_note).unwrap();
+        assert!(synced.nodes.iter().any(|n| n.name == "盗賊頭領"));
+        let thief_node = synced.nodes.iter().find(|n| n.name == "盗賊頭領").unwrap();
+        assert_eq!(thief_node.node_type, "character");
+        assert!(thief_node.aliases.contains(&"黒頭巾の男".to_string()));
+
+        // Edge between 盗賊頭領 and 下人
+        assert!(synced.edges.iter().any(|e| {
+            (e.source_id == thief_node.id || e.target_id == thief_node.id) && e.relation_type == "追跡"
+        }));
+
+        // 4. Overall plot
+        let plot = engine.get_overall_plot().unwrap();
+        assert!(plot.contains("悪への転向"));
+        engine.save_overall_plot("# 全体プロット\n\n## クライマックス\n- 種別: plot\n下人の行方は誰も知らない。").unwrap();
+        let updated_plot = engine.get_overall_plot().unwrap();
+        assert!(updated_plot.contains("クライマックス"));
     }
 }

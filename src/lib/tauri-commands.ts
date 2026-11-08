@@ -57,6 +57,15 @@ export interface GitStatusInfo {
   untracked_files: string[];
 }
 
+export interface CommitHistoryItem {
+  commit_id: string;
+  message: string;
+  author: string;
+  timestamp: number;
+  date_str: string;
+  content: string | null;
+}
+
 export interface DiffLine {
   line_type: 'Context' | 'Addition' | 'Deletion';
   old_lineno: number | null;
@@ -164,6 +173,10 @@ export async function gitDiscardRevision(repoPath: string, branchName: string): 
   return await invoke<void>('git_discard_revision', { repoPath, branchName });
 }
 
+export async function getFileHistory(repoPath: string, filePath: string): Promise<CommitHistoryItem[]> {
+  return await invoke<CommitHistoryItem[]>('git_get_file_history', { repoPath, filePath });
+}
+
 export async function aiRunRevision(
   repoPath: string,
   filePath: string,
@@ -196,6 +209,7 @@ export interface WorldNode {
   aliases: string[];
   summary: string;
   attributes: Record<string, string>;
+  full_text?: string;
   created_at: string;
   updated_at: string;
 }
@@ -259,6 +273,34 @@ export async function buildAiGraphContext(vaultPath: string, manuscriptText: str
 
 export async function analyzeSceneGraph(vaultPath: string, manuscriptText: string): Promise<SceneGraphAnalysis> {
   return await invoke<SceneGraphAnalysis>('analyze_scene_graph', { vaultPath, manuscriptText });
+}
+
+export async function listWorldNotes(vaultPath: string): Promise<string[]> {
+  return await invoke<string[]>('list_world_notes', { vaultPath });
+}
+
+export async function readWorldNote(vaultPath: string, noteName: string): Promise<string> {
+  return await invoke<string>('read_world_note', { vaultPath, noteName });
+}
+
+export async function saveWorldNote(vaultPath: string, noteName: string, content: string): Promise<GraphData> {
+  return await invoke<GraphData>('save_world_note', { vaultPath, noteName, content });
+}
+
+export async function getOverallPlot(vaultPath: string): Promise<string> {
+  return await invoke<string>('get_overall_plot', { vaultPath });
+}
+
+export async function saveOverallPlot(vaultPath: string, plot: string): Promise<GraphData> {
+  return await invoke<GraphData>('save_overall_plot', { vaultPath, plot });
+}
+
+export async function syncNotesToGraph(vaultPath: string): Promise<GraphData> {
+  return await invoke<GraphData>('sync_notes_to_graph', { vaultPath });
+}
+
+export async function extractGraphWithAi(vaultPath: string, text: string, config: AiConfig): Promise<GraphData> {
+  return await invoke<GraphData>('extract_graph_with_ai_command', { vaultPath, text, config });
 }
 
 // GUI Episode Organizer & Sync Commands

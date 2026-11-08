@@ -42,6 +42,12 @@ import {
   getSyncConfig,
   saveSyncConfig,
   triggerAutoSync,
+  getOverallPlot,
+  saveOverallPlot,
+  listWorldNotes,
+  readWorldNote,
+  saveWorldNote,
+  syncNotesToGraph,
 } from '../lib/tauri-commands';
 
 interface VaultState {
@@ -220,6 +226,9 @@ interface EditorState {
   targetCharCount: number;
   metrics: ManuscriptMetrics;
   lintIssues: LintIssue[];
+  isZenFocus: boolean;
+  isTyping: boolean;
+  isInspectorPinned: boolean;
   loadFile: (path: string) => Promise<void>;
   updateBody: (newBody: string) => void;
   updateFrontmatterField: (patch: Partial<Frontmatter>) => void;
@@ -231,6 +240,9 @@ interface EditorState {
   toggleLineNumbers: () => void;
   toggleVerticalPreview: () => void;
   setTargetCharCount: (target: number) => void;
+  setIsZenFocus: (val: boolean) => void;
+  setIsTyping: (val: boolean) => void;
+  toggleInspectorPin: () => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -252,6 +264,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     estimated_reading_time_min: 0,
   },
   lintIssues: [],
+  isZenFocus: false,
+  isTyping: false,
+  isInspectorPinned: false,
 
   loadFile: async (path: string) => {
     try {
@@ -327,6 +342,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   toggleLineNumbers: () => set((state) => ({ showLineNumbers: !state.showLineNumbers })),
   toggleVerticalPreview: () => set((state) => ({ isVerticalPreviewOpen: !state.isVerticalPreviewOpen })),
   setTargetCharCount: (targetCharCount: number) => set({ targetCharCount }),
+  setIsZenFocus: (isZenFocus: boolean) => set({ isZenFocus }),
+  setIsTyping: (isTyping: boolean) => set({ isTyping }),
+  toggleInspectorPin: () => set((state) => ({ isInspectorPinned: !state.isInspectorPinned })),
 }));
 
 interface DiffState {
@@ -435,6 +453,8 @@ interface WorldGraphState {
   graphData: GraphData;
   selectedNodeId: string | null;
   sceneAnalysis: SceneGraphAnalysis | null;
+  overallPlot: string;
+  notes: string[];
   isLoading: boolean;
   loadGraph: (vaultPath: string) => Promise<void>;
   upsertNode: (vaultPath: string, node: WorldNode) => Promise<WorldNode | null>;
@@ -443,12 +463,20 @@ interface WorldGraphState {
   deleteEdge: (vaultPath: string, edgeId: string) => Promise<void>;
   analyzeScene: (vaultPath: string, text: string) => Promise<void>;
   setSelectedNodeId: (id: string | null) => void;
+  loadOverallPlot: (vaultPath: string) => Promise<void>;
+  saveOverallPlotText: (vaultPath: string, plot: string) => Promise<void>;
+  loadNotesList: (vaultPath: string) => Promise<void>;
+  readNoteContent: (vaultPath: string, noteName: string) => Promise<string>;
+  saveNoteContent: (vaultPath: string, noteName: string, content: string) => Promise<void>;
+  syncAllNotes: (vaultPath: string) => Promise<void>;
 }
 
 export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
   graphData: { nodes: [], edges: [] },
   selectedNodeId: null,
   sceneAnalysis: null,
+  overallPlot: '',
+  notes: [],
   isLoading: false,
 
   loadGraph: async (vaultPath: string) => {
@@ -456,9 +484,70 @@ export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
     try {
       const data = await getWorldGraph(vaultPath);
       set({ graphData: data, isLoading: false });
+      // Also load plot and notes in background
+      get().loadOverallPlot(vaultPath);
+      get().loadNotesList(vaultPath);
     } catch (e) {
       console.error('Failed to load world graph:', e);
       set({ isLoading: false });
+    }
+  },
+
+  loadOverallPlot: async (vaultPath: string) => {
+    try {
+      const plot = await getOverallPlot(vaultPath);
+      set({ overallPlot: plot });
+    } catch (e) {
+      console.error('Failed to load overall plot:', e);
+    }
+  },
+
+  saveOverallPlotText: async (vaultPath: string, plot: string) => {
+    try {
+      const updatedGraph = await saveOverallPlot(vaultPath, plot);
+      set({ overallPlot: plot, graphData: updatedGraph });
+      useSyncStore.getState().loadStatus(vaultPath);
+    } catch (e) {
+      console.error('Failed to save overall plot:', e);
+    }
+  },
+
+  loadNotesList: async (vaultPath: string) => {
+    try {
+      const notes = await listWorldNotes(vaultPath);
+      set({ notes });
+    } catch (e) {
+      console.error('Failed to list notes:', e);
+    }
+  },
+
+  readNoteContent: async (vaultPath: string, noteName: string) => {
+    try {
+      return await readWorldNote(vaultPath, noteName);
+    } catch (e) {
+      console.error('Failed to read note:', e);
+      return '';
+    }
+  },
+
+  saveNoteContent: async (vaultPath: string, noteName: string, content: string) => {
+    try {
+      const updatedGraph = await saveWorldNote(vaultPath, noteName, content);
+      set({ graphData: updatedGraph });
+      await get().loadNotesList(vaultPath);
+      useSyncStore.getState().loadStatus(vaultPath);
+    } catch (e) {
+      console.error('Failed to save note:', e);
+    }
+  },
+
+  syncAllNotes: async (vaultPath: string) => {
+    try {
+      const updatedGraph = await syncNotesToGraph(vaultPath);
+      set({ graphData: updatedGraph });
+      useSyncStore.getState().loadStatus(vaultPath);
+    } catch (e) {
+      console.error('Failed to sync notes:', e);
     }
   },
 

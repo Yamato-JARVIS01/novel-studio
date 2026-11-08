@@ -14,6 +14,7 @@ import {
   Share2,
   AlertTriangle,
   ArrowRight,
+  Pin,
 } from 'lucide-react';
 
 export function Inspector() {
@@ -23,6 +24,8 @@ export function Inspector() {
     frontmatter,
     targetCharCount,
     theme,
+    isInspectorPinned,
+    toggleInspectorPin,
     changeStatus,
     updateFrontmatterField,
   } = useEditorStore();
@@ -119,6 +122,19 @@ export function Inspector() {
         >
           <BookOpen className="w-3.5 h-3.5" />
           <span>シーン</span>
+        </button>
+
+        {/* Pin Button for Zen Focus mode */}
+        <button
+          onClick={toggleInspectorPin}
+          className={`px-2.5 py-2 flex items-center justify-center border-l transition-all ${
+            isInspectorPinned
+              ? 'text-amber-500 bg-amber-500/15'
+              : 'opacity-40 hover:opacity-100'
+          }`}
+          title={isInspectorPinned ? '集中時ピン留め解除' : '集中時も横に常時ピン留め'}
+        >
+          <Pin className={`w-3.5 h-3.5 ${isInspectorPinned ? 'rotate-45 fill-amber-500' : ''}`} />
         </button>
       </div>
 

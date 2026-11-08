@@ -56,6 +56,16 @@ pub struct GitStatusInfo {
     pub untracked_files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitHistoryItem {
+    pub commit_id: String,
+    pub message: String,
+    pub author: String,
+    pub timestamp: i64,
+    pub date_str: String,
+    pub content: Option<String>,
+}
+
 pub struct GitManager;
 
 impl GitManager {
@@ -249,6 +259,60 @@ impl GitManager {
         branch.delete()?;
         Ok(())
     }
+
+    /// Retrieve commit history and file contents for writing time machine
+    pub fn get_file_history(repo: &Repository, relative_path: &str) -> Result<Vec<CommitHistoryItem>, GitError> {
+        let mut revwalk = repo.revwalk()?;
+        if revwalk.push_head().is_err() {
+            return Ok(Vec::new());
+        }
+        revwalk.set_sorting(git2::Sort::TIME)?;
+
+        let mut history = Vec::new();
+        let norm_path = Path::new(relative_path);
+
+        for oid in revwalk {
+            let oid = match oid {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let commit = match repo.find_commit(oid) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let tree = match commit.tree() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+
+            if let Ok(entry) = tree.get_path(norm_path) {
+                let blob = match repo.find_blob(entry.id()) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let content = String::from_utf8_lossy(blob.content()).to_string();
+                let time = commit.time();
+                let dt = chrono::DateTime::from_timestamp(time.seconds(), 0)
+                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| "".to_string());
+
+                history.push(CommitHistoryItem {
+                    commit_id: oid.to_string(),
+                    message: commit.summary().unwrap_or("").to_string(),
+                    author: commit.author().name().unwrap_or("").to_string(),
+                    timestamp: time.seconds(),
+                    date_str: dt,
+                    content: Some(content),
+                });
+                if history.len() >= 50 {
+                    break;
+                }
+            }
+        }
+
+        Ok(history)
+    }
 }
 
 #[cfg(test)]
@@ -288,5 +352,11 @@ mod tests {
         GitManager::discard_shadow_branch(&repo, shadow_branch).unwrap();
         let branch = repo.find_branch(shadow_branch, git2::BranchType::Local);
         assert!(branch.is_err());
+
+        // 5. Test file history for Time Machine
+        let history = GitManager::get_file_history(&repo, "chapter_01.md").unwrap();
+        assert!(!history.is_empty());
+        assert_eq!(history[0].message, "feat: write chapter 1");
+        assert!(history[0].content.as_ref().unwrap().contains("第一章"));
     }
 }

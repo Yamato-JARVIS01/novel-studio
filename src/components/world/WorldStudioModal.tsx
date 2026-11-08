@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Plus,
@@ -12,6 +12,9 @@ import {
   Check,
   Sparkles,
   ArrowRight,
+  FileText,
+  RefreshCw,
+  Save,
 } from 'lucide-react';
 import { useVaultStore, useWorldGraphStore, useEditorStore } from '../../store';
 import { WorldNode, WorldEdge, WorldNodeType } from '../../lib/tauri-commands';
@@ -30,11 +33,35 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     deleteNode,
     upsertEdge,
     deleteEdge,
+    notes,
+    loadNotesList,
+    readNoteContent,
+    saveNoteContent,
+    syncAllNotes,
   } = useWorldGraphStore();
 
   const isSepia = theme === 'cream-sepia';
 
-  const [activeTab, setActiveTab] = useState<'cards' | 'graph'>('cards');
+  const [activeTab, setActiveTab] = useState<'cards' | 'graph' | 'notes'>('cards');
+  const [selectedNote, setSelectedNote] = useState<string>('characters.md');
+  const [noteContent, setNoteContent] = useState<string>('');
+  const [isSyncingNotes, setIsSyncingNotes] = useState(false);
+  const [isNoteSaved, setIsNoteSaved] = useState(false);
+  const [newNoteFileName, setNewNoteFileName] = useState('');
+  const [isCreatingNewNote, setIsCreatingNewNote] = useState(false);
+
+  useEffect(() => {
+    if (vaultPath && isOpen) {
+      loadNotesList(vaultPath);
+    }
+  }, [vaultPath, isOpen, loadNotesList]);
+
+  useEffect(() => {
+    if (vaultPath && selectedNote) {
+      readNoteContent(vaultPath, selectedNote).then((c) => setNoteContent(c));
+    }
+  }, [vaultPath, selectedNote, readNoteContent]);
+
   const [categoryFilter, setCategoryFilter] = useState<WorldNodeType>('character');
   const [editingNode, setEditingNode] = useState<WorldNode | null>(null);
   const [isCreatingNode, setIsCreatingNode] = useState(false);
@@ -275,6 +302,18 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
               >
                 🌐 インタラクティブ相関図
               </button>
+              <button
+                onClick={() => setActiveTab('notes')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'notes'
+                    ? isSepia
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-amber-600 text-white shadow-xs'
+                    : 'opacity-70 hover:opacity-100'
+                }`}
+              >
+                📝 長文設定ノート
+              </button>
             </div>
 
             <button
@@ -483,7 +522,7 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 )}
               </div>
             </div>
-          ) : (
+          ) : activeTab === 'graph' ? (
             /* TAB 2: Interactive Visual Graph */
             <div className="flex-1 flex flex-col overflow-hidden relative">
               {/* Visual Graph Toolbar */}
@@ -670,6 +709,159 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* TAB 3: Long-form Setting Notes (.md) */
+            <div className="flex-1 flex overflow-hidden">
+              {/* Note Files Sidebar */}
+              <div
+                className={`w-64 border-r flex flex-col ${
+                  isSepia ? 'border-amber-900/10 bg-amber-50/40' : 'border-neutral-800 bg-[#161513]/60'
+                }`}
+              >
+                <div className="p-3 border-b border-inherit flex items-center justify-between">
+                  <span className="text-xs font-bold opacity-75">設定ノート一覧</span>
+                  <button
+                    onClick={async () => {
+                      if (!vaultPath) return;
+                      setIsSyncingNotes(true);
+                      await syncAllNotes(vaultPath);
+                      setIsSyncingNotes(false);
+                    }}
+                    disabled={isSyncingNotes}
+                    className="p-1 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-neutral-500/10 transition-colors"
+                    title="全ノートから世界観グラフを一括再同期"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingNotes ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                  {notes.map((note) => (
+                    <button
+                      key={note}
+                      onClick={() => setSelectedNote(note)}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center gap-2 transition-all ${
+                        selectedNote === note
+                          ? isSepia
+                            ? 'bg-amber-100 border border-amber-300 text-amber-950 font-bold shadow-2xs'
+                            : 'bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold shadow-2xs'
+                          : 'opacity-70 hover:opacity-100 hover:bg-neutral-500/10'
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5 opacity-60 shrink-0" />
+                      <span className="truncate">{note}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Add new note button */}
+                <div className="p-2 border-t border-inherit">
+                  {isCreatingNewNote ? (
+                    <div className="space-y-1.5 p-1">
+                      <input
+                        type="text"
+                        placeholder="lore.md"
+                        value={newNoteFileName}
+                        onChange={(e) => setNewNoteFileName(e.target.value)}
+                        className={`w-full px-2 py-1 text-xs rounded border outline-none ${
+                          isSepia ? 'bg-white border-amber-300' : 'bg-[#22211f] border-neutral-700'
+                        }`}
+                      />
+                      <div className="flex gap-1 justify-end">
+                        <button
+                          onClick={() => {
+                            setIsCreatingNewNote(false);
+                            setNewNoteFileName('');
+                          }}
+                          className="px-2 py-0.5 text-[10px] opacity-60 hover:opacity-100"
+                        >
+                          取消
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!vaultPath || !newNoteFileName.trim()) return;
+                            const name = newNoteFileName.endsWith('.md')
+                              ? newNoteFileName.trim()
+                              : `${newNoteFileName.trim()}.md`;
+                            await saveNoteContent(vaultPath, name, `# ${name.replace('.md', '')}\n\n`);
+                            setSelectedNote(name);
+                            setIsCreatingNewNote(false);
+                            setNewNoteFileName('');
+                          }}
+                          className="px-2 py-0.5 text-[10px] bg-amber-600 text-white rounded font-bold"
+                        >
+                          作成
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setIsCreatingNewNote(true)}
+                      className={`w-full py-2 px-3 rounded-xl border border-dashed text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                        isSepia
+                          ? 'border-amber-300 hover:bg-amber-100/60 text-amber-900'
+                          : 'border-neutral-700 hover:bg-[#252420] text-amber-300'
+                      }`}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>新規設定ノート</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Note Editor Viewport */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <div
+                  className={`px-6 py-3 border-b flex items-center justify-between ${
+                    isSepia ? 'bg-white/50 border-amber-900/10' : 'bg-white/5 border-neutral-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-amber-500" />
+                    <div>
+                      <div className="text-xs font-bold">.novelstudio/notes/{selectedNote}</div>
+                      <div className="text-[10px] opacity-50">
+                        マークダウン記述（見出し・属性リスト）から人物・舞台・相関関係を自律同期
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {isNoteSaved && (
+                      <span className="text-xs text-emerald-500 font-bold flex items-center gap-1 animate-pulse">
+                        <Check className="w-3.5 h-3.5" /> グラフに同期しました
+                      </span>
+                    )}
+                    <button
+                      onClick={async () => {
+                        if (!vaultPath || !selectedNote) return;
+                        await saveNoteContent(vaultPath, selectedNote, noteContent);
+                        setIsNoteSaved(true);
+                        setTimeout(() => setIsNoteSaved(false), 2000);
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-sm transition-all cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>保存してグラフ同期</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 p-6 overflow-y-auto">
+                  <textarea
+                    value={noteContent}
+                    onChange={(e) => setNoteContent(e.target.value)}
+                    placeholder="マークダウンで設定を記述してください..."
+                    className={`w-full h-full p-4 rounded-xl font-mono text-xs leading-relaxed resize-none outline-none border transition-all ${
+                      isSepia
+                        ? 'bg-white/80 border-amber-900/15 focus:border-amber-600 text-neutral-900'
+                        : 'bg-[#151412] border-neutral-800 focus:border-amber-500/80 text-neutral-100'
+                    }`}
+                  />
                 </div>
               </div>
             </div>

@@ -6,7 +6,7 @@ pub mod world_graph;
 use std::path::Path;
 use editor_engine::frontmatter::{extract_frontmatter, update_frontmatter, update_status, Frontmatter, SceneStatus};
 use editor_engine::jp_linter::{calculate_metrics, lint_japanese_text, LintConfig, LintIssue, ManuscriptMetrics};
-use storage::git_manager::{DiffFile, GitManager, GitStatusInfo};
+use storage::git_manager::{CommitHistoryItem, DiffFile, GitManager, GitStatusInfo};
 use storage::auto_sync::{AutoSyncEngine, SyncConfig, SyncStatus};
 use storage::{FileNode, StorageManager};
 use ai::provider::AiConfig;
@@ -117,6 +117,17 @@ fn git_discard_revision(repo_path: String, branch_name: String) -> Result<(), St
     GitManager::discard_shadow_branch(&repo, &branch_name).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn git_get_file_history(repo_path: String, file_path: String) -> Result<Vec<CommitHistoryItem>, String> {
+    let r_path = Path::new(&repo_path);
+    let f_path = Path::new(&file_path);
+    let rel_path = f_path.strip_prefix(r_path).unwrap_or(f_path);
+    let rel_str = rel_path.to_string_lossy().to_string();
+
+    let repo = GitManager::init_or_open(r_path).map_err(|e| e.to_string())?;
+    GitManager::get_file_history(&repo, &rel_str).map_err(|e| e.to_string())
+}
+
 // AI Engine IPC
 #[tauri::command]
 async fn ai_run_revision(
@@ -193,6 +204,60 @@ fn analyze_scene_graph(vault_path: String, manuscript_text: String) -> Result<Sc
     engine.analyze_scene(&manuscript_text).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn list_world_notes(vault_path: String) -> Result<Vec<String>, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.list_notes().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_world_note(vault_path: String, note_name: String) -> Result<String, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.read_note(&note_name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_world_note(vault_path: String, note_name: String, content: String) -> Result<GraphData, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let graph = engine.save_note(&note_name, &content).map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), &format!("設定ノート更新: {}", note_name));
+    Ok(graph)
+}
+
+#[tauri::command]
+fn get_overall_plot(vault_path: String) -> Result<String, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.get_overall_plot().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_overall_plot(vault_path: String, plot: String) -> Result<GraphData, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let graph = engine.save_overall_plot(&plot).map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "全体筋書きプロット更新");
+    Ok(graph)
+}
+
+#[tauri::command]
+fn sync_notes_to_graph(vault_path: String) -> Result<GraphData, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let graph = engine.sync_notes_to_graph().map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "ノート相関同期");
+    Ok(graph)
+}
+
+#[tauri::command]
+async fn extract_graph_with_ai_command(
+    vault_path: String,
+    text: String,
+    config: AiConfig,
+) -> Result<GraphData, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let graph = engine.extract_graph_with_ai(&text, &config).await.map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "AI世界観構造抽出");
+    Ok(graph)
+}
+
 // GUI Episode Organizer & Sync IPC
 #[tauri::command]
 fn reorder_episodes(vault_path: String, ordered_paths: Vec<String>) -> Result<(), String> {
@@ -247,6 +312,7 @@ pub fn run() {
             git_get_diff,
             git_apply_revision,
             git_discard_revision,
+            git_get_file_history,
             ai_run_revision,
             save_api_key_command,
             get_api_key_command,
@@ -257,6 +323,13 @@ pub fn run() {
             delete_world_edge,
             build_ai_graph_context,
             analyze_scene_graph,
+            list_world_notes,
+            read_world_note,
+            save_world_note,
+            get_overall_plot,
+            save_overall_plot,
+            sync_notes_to_graph,
+            extract_graph_with_ai_command,
             get_sync_status,
             get_sync_config,
             save_sync_config,

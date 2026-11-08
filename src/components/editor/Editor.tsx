@@ -4,6 +4,9 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirro
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { useEditorStore, useVaultStore, useDiffStore, useAiStore } from '../../store';
 import { VerticalPreviewModal } from './VerticalPreviewModal';
+import { rubyExtension } from './rubyExtension';
+import { FloatingPlotHud } from './FloatingPlotHud';
+import { TimeMachineModal } from './TimeMachineModal';
 import {
   Save,
   Check,
@@ -23,6 +26,8 @@ import {
   ChevronDown,
   AlertCircle,
   BookMarked,
+  Compass,
+  History,
 } from 'lucide-react';
 
 interface EditorProps {
@@ -32,6 +37,7 @@ interface EditorProps {
 export function Editor({ onOpenSettings }: EditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     body,
@@ -40,6 +46,7 @@ export function Editor({ onOpenSettings }: EditorProps) {
     fontFamily,
     theme,
     showLineNumbers,
+    isZenFocus,
     updateBody,
     save,
     setFontSize,
@@ -47,13 +54,16 @@ export function Editor({ onOpenSettings }: EditorProps) {
     toggleTheme,
     toggleLineNumbers,
     toggleVerticalPreview,
+    setIsZenFocus,
+    setIsTyping,
   } = useEditorStore();
 
   const { activeFilePath, loadSampleProject, setVaultPath } = useVaultStore();
   const { isDiffOpen, diffFiles, acceptRevision, rejectRevision } = useDiffStore();
   const { isReviewing, lastError, runReview } = useAiStore();
 
-  const [isZenMode, setIsZenMode] = useState(false);
+  const [isPlotHudOpen, setIsPlotHudOpen] = useState(false);
+  const [isTimeMachineOpen, setIsTimeMachineOpen] = useState(false);
   const [isAiMenuOpen, setIsAiMenuOpen] = useState(false);
   const [promptText] = useState('表現のブラッシュアップと情景描写の深化を行ってください。');
   const [isApiKeyWarningOpen, setIsApiKeyWarningOpen] = useState(false);
@@ -172,17 +182,25 @@ export function Editor({ onOpenSettings }: EditorProps) {
       viewRef.current.destroy();
     }
 
-    // 1. Line Wrapping extension to guarantee no horizontal overflow
+    // 1. Line Wrapping and Ruby & Bouten extension
     const extensions = [
       EditorView.lineWrapping,
       highlightActiveLine(),
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
+      ...rubyExtension,
       customTheme,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           const newDoc = update.state.doc.toString();
           updateBody(newDoc);
+
+          // Typing trigger for Zen Focus auto fadeout
+          setIsTyping(true);
+          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+          typingTimerRef.current = setTimeout(() => {
+            setIsTyping(false);
+          }, 2400);
         }
       }),
     ];
@@ -272,6 +290,37 @@ export function Editor({ onOpenSettings }: EditorProps) {
 
         {/* Toolbar Controls */}
         <div className="flex items-center space-x-2">
+          {/* Floating Plot HUD Button */}
+          <button
+            onClick={() => setIsPlotHudOpen(!isPlotHudOpen)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+              isPlotHudOpen
+                ? 'bg-amber-600 text-white border-amber-600 shadow-amber-900/30'
+                : isSepia
+                ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-neutral-700'
+                : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-neutral-300'
+            }`}
+            title="全体＆話別筋書きのフローティングHUD"
+          >
+            <Compass className="w-3.5 h-3.5 text-amber-500" />
+            <span>筋書きHUD</span>
+          </button>
+
+          {/* Time Machine Modal Button */}
+          <button
+            onClick={() => setIsTimeMachineOpen(true)}
+            disabled={!activeFilePath}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+              isSepia
+                ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-neutral-700'
+                : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-neutral-300'
+            } disabled:opacity-40`}
+            title="過去のスナップショットをタイムトラベル・復元"
+          >
+            <History className="w-3.5 h-3.5 text-amber-500" />
+            <span>タイムマシン</span>
+          </button>
+
           {/* Vertical Preview Button */}
           <button
             onClick={toggleVerticalPreview}
@@ -404,17 +453,19 @@ export function Editor({ onOpenSettings }: EditorProps) {
             </button>
           </div>
 
-          {/* Zen Mode */}
+          {/* Zen Focus Mode */}
           <button
-            onClick={() => setIsZenMode(!isZenMode)}
+            onClick={() => setIsZenFocus(!isZenFocus)}
             className={`p-1.5 rounded-lg border transition-colors ${
-              isSepia
+              isZenFocus
+                ? 'bg-amber-600 text-white border-amber-600'
+                : isSepia
                 ? 'bg-amber-50 border-amber-200 text-neutral-700 hover:bg-amber-100'
                 : 'bg-[#252321] border-[#383531] text-neutral-300 hover:bg-[#2f2c29]'
             }`}
-            title={isZenMode ? '集中モード解除' : '集中モード'}
+            title={isZenFocus ? '禅フォーカス解除' : '禅フォーカス（タイピング時自動全没入）'}
           >
-            {isZenMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            {isZenFocus ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
 
           {/* Save Button */}
@@ -598,10 +649,15 @@ export function Editor({ onOpenSettings }: EditorProps) {
         ) : (
           <div ref={editorRef} className="h-full w-full overflow-y-auto" />
         )}
+        {/* Floating Plot & Synopsis HUD */}
+        <FloatingPlotHud isOpen={isPlotHudOpen} onClose={() => setIsPlotHudOpen(false)} />
       </div>
 
       {/* Vertical Japanese Book Reading Modal */}
       <VerticalPreviewModal />
+
+      {/* Writing Time Machine Modal */}
+      <TimeMachineModal isOpen={isTimeMachineOpen} onClose={() => setIsTimeMachineOpen(false)} />
     </div>
   );
 }
