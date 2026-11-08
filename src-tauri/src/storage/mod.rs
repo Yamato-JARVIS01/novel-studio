@@ -1,5 +1,8 @@
+pub mod auto_sync;
 pub mod git_manager;
+pub mod manifest;
 
+use manifest::ManifestManager;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -13,6 +16,8 @@ pub enum StorageError {
     Git(#[from] git_manager::GitError),
     #[error("Octocrab error: {0}")]
     Octocrab(#[from] octocrab::Error),
+    #[error("Manifest error: {0}")]
+    Manifest(#[from] manifest::ManifestError),
     #[error("File not found: {0}")]
     NotFound(String),
 }
@@ -106,10 +111,24 @@ impl StorageManager {
             }
         }
 
-        // Sort: directories first, then files alphabetically
+        let manifest = ManifestManager::load_manifest(root);
+
+        // Sort: directories first, then files ordered by manifest or alphabetically
         nodes.sort_by(|a, b| {
             if a.is_dir == b.is_dir {
-                a.name.cmp(&b.name)
+                if !a.is_dir {
+                    let pos_a = manifest.episode_order.iter().position(|name| name == &a.name || a.path.ends_with(name));
+                    let pos_b = manifest.episode_order.iter().position(|name| name == &b.name || b.path.ends_with(name));
+
+                    match (pos_a, pos_b) {
+                        (Some(idx_a), Some(idx_b)) => idx_a.cmp(&idx_b),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => a.name.cmp(&b.name),
+                    }
+                } else {
+                    a.name.cmp(&b.name)
+                }
             } else if a.is_dir {
                 std::cmp::Ordering::Less
             } else {
@@ -139,7 +158,13 @@ impl StorageManager {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, content).map_err(StorageError::Io)
+        fs::write(path, content)?;
+        // Auto-sync if parent has a vault
+        if let Some(parent) = path.parent() {
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+            auto_sync::AutoSyncEngine::trigger_sync(parent, &format!("エピソード保存: {}", file_name));
+        }
+        Ok(())
     }
 
     /// Create a new episode file with template frontmatter
@@ -158,7 +183,29 @@ impl StorageManager {
             );
             Self::save_file(&file_path, &initial_content)?;
         }
+
+        // Register into manifest order
+        let _ = ManifestManager::append_episode(vault_path, &clean_name);
+
+        // Auto-sync
+        auto_sync::AutoSyncEngine::trigger_sync(vault_path, &format!("エピソード作成: {}", clean_name));
+
         Ok(file_path.to_string_lossy().to_string())
+    }
+
+    /// Reorder episodes in manifest
+    pub fn reorder_episodes(vault_path: &Path, ordered_names: &[String]) -> Result<(), StorageError> {
+        ManifestManager::reorder_episodes(vault_path, ordered_names)?;
+        auto_sync::AutoSyncEngine::trigger_sync(vault_path, "エピソード順序の並び替え");
+        Ok(())
+    }
+
+    /// Delete episode and safely move to .novelstudio/trash/
+    pub fn delete_episode(vault_path: &Path, file_path: &Path) -> Result<String, StorageError> {
+        let trash_path = ManifestManager::delete_episode(vault_path, file_path)?;
+        let name = file_path.file_name().unwrap_or_default().to_string_lossy();
+        auto_sync::AutoSyncEngine::trigger_sync(vault_path, &format!("エピソード削除: {}", name));
+        Ok(trash_path)
     }
 
     /// Create sample project with rich literary sample episodes
@@ -224,8 +271,19 @@ synopsis: "死骸の満ちる楼上に微かな光を見出した下人は、静
             Self::save_file(&episode_2, content_2)?;
         }
 
-        // Initialize git
+        // Initialize manifest
+        let _ = ManifestManager::reorder_episodes(
+            &vault_path,
+            &["第01話_雨夜の羅生門.md".to_string(), "第02話_楼上の灯火.md".to_string()],
+        );
+
+        // Initialize World Graph
+        let graph_engine = crate::world_graph::KuzuGraphEngine::new(&vault_path);
+        let _ = graph_engine.get_graph();
+
+        // Initialize git & auto-sync
         let _ = crate::storage::git_manager::GitManager::init_or_open(&vault_path);
+        auto_sync::AutoSyncEngine::trigger_sync(&vault_path, "サンプルプロジェクト初期化");
 
         Ok(vault_path.to_string_lossy().to_string())
     }

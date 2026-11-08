@@ -60,9 +60,22 @@ impl AiPipeline {
         // Ensure clean or auto-commit current state
         let _ = GitManager::auto_commit(&repo, "Auto-commit before AI revision");
 
-        // 1. Call AI Provider
+        // 1. Automatically extract GraphRAG context from World Graph
+        let graph_engine = crate::world_graph::KuzuGraphEngine::new(repo_path);
+        let graph_context = graph_engine.build_ai_graph_context(&original_content).unwrap_or_default();
+
+        let enhanced_user_prompt = if !graph_context.is_empty() {
+            format!(
+                "{}\n\n【世界観グラフ自動注入コンテキスト (GraphRAG)】\n{}\n\n【追加指示】上記のキャラクター設定（一人称・口調）・関係性・プロット伏線との矛盾が生じないよう厳密に配慮して推敲してください。",
+                user_prompt, graph_context
+            )
+        } else {
+            user_prompt.to_string()
+        };
+
+        // 2. Call AI Provider with Graph-augmented prompt
         let provider = AiProvider::new();
-        let revised_content = provider.request_review(config, user_prompt, &original_content).await?;
+        let revised_content = provider.request_review(config, &enhanced_user_prompt, &original_content).await?;
 
         // 2. Generate branch name with timestamp
         let timestamp = SystemTime::now()

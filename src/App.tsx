@@ -3,11 +3,13 @@ import { Sidebar } from './components/sidebar/Sidebar';
 import { Editor } from './components/editor/Editor';
 import { Inspector } from './components/inspector/Inspector';
 import { SettingsModal } from './components/settings/Settings';
-import { Settings as SettingsIcon, Feather } from 'lucide-react';
+import { WorldStudioModal } from './components/world/WorldStudioModal';
+import { Settings as SettingsIcon, Feather, Share2 } from 'lucide-react';
 import { useVaultStore, useEditorStore } from './store';
 
 export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isWorldStudioOpen, setIsWorldStudioOpen] = useState(false);
   const { vaultPath } = useVaultStore();
   const { theme } = useEditorStore();
 
@@ -48,6 +50,22 @@ export default function App() {
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* World Graph Studio Button */}
+          <button
+            onClick={() => setIsWorldStudioOpen(true)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              isSepia
+                ? 'bg-amber-600/10 hover:bg-amber-600/20 text-amber-900 border-amber-600/30'
+                : 'bg-amber-400/10 hover:bg-amber-400/20 text-amber-300 border-amber-400/30'
+            }`}
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            <span>世界観・相関図</span>
+            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 font-mono">
+              GraphRAG
+            </span>
+          </button>
+
           {/* Settings Trigger */}
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -74,6 +92,9 @@ export default function App() {
         {/* Right Pane: Manuscript & Scene Inspector */}
         <Inspector />
       </main>
+
+      {/* World Graph Studio Modal */}
+      <WorldStudioModal isOpen={isWorldStudioOpen} onClose={() => setIsWorldStudioOpen(false)} />
 
       {/* Settings Modal */}
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />

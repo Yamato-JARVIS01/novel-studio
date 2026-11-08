@@ -9,6 +9,12 @@ import {
   SceneStatus,
   AiConfig,
   AiProviderType,
+  WorldNode,
+  WorldEdge,
+  GraphData,
+  SceneGraphAnalysis,
+  SyncStatus,
+  SyncConfig,
   calculateMetrics,
   lintJapaneseText,
   parseDocument,
@@ -24,6 +30,18 @@ import {
   aiRunRevision,
   createSampleProject,
   createNewEpisode,
+  reorderEpisodes,
+  deleteEpisode,
+  getWorldGraph,
+  upsertWorldNode,
+  deleteWorldNode,
+  upsertWorldEdge,
+  deleteWorldEdge,
+  analyzeSceneGraph,
+  getSyncStatus,
+  getSyncConfig,
+  saveSyncConfig,
+  triggerAutoSync,
 } from '../lib/tauri-commands';
 
 interface VaultState {
@@ -39,6 +57,8 @@ interface VaultState {
   refreshGitStatus: () => Promise<void>;
   selectFile: (path: string) => Promise<void>;
   addEpisode: (title: string) => Promise<string | null>;
+  reorderEpisodesList: (orderedPaths: string[]) => Promise<void>;
+  removeEpisode: (filePath: string) => Promise<void>;
   snapshotCurrentState: () => Promise<void>;
 }
 
@@ -56,6 +76,11 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       const files = await openVault(path);
       const git = await getGitStatus(path).catch(() => null);
       set({ files, gitStatus: git, isLoading: false });
+
+      // Load World Graph & Sync Status asynchronously
+      useWorldGraphStore.getState().loadGraph(path);
+      useSyncStore.getState().loadStatus(path);
+      useSyncStore.getState().loadConfig(path);
 
       // Auto-select first episode if available
       const findFirst = (nodes: FileNode[]): string | null => {
@@ -124,10 +149,45 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       const newPath = await createNewEpisode(vaultPath, title);
       await refreshFiles();
       await selectFile(newPath);
+      useSyncStore.getState().loadStatus(vaultPath);
       return newPath;
     } catch (e) {
       console.error('Failed to add episode:', e);
       return null;
+    }
+  },
+
+  reorderEpisodesList: async (orderedPaths: string[]) => {
+    const { vaultPath, refreshFiles } = get();
+    if (!vaultPath) return;
+    try {
+      await reorderEpisodes(vaultPath, orderedPaths);
+      await refreshFiles();
+      useSyncStore.getState().loadStatus(vaultPath);
+    } catch (e) {
+      console.error('Failed to reorder episodes:', e);
+    }
+  },
+
+  removeEpisode: async (filePath: string) => {
+    const { vaultPath, refreshFiles, activeFilePath } = get();
+    if (!vaultPath) return;
+    try {
+      await deleteEpisode(vaultPath, filePath);
+      await refreshFiles();
+      useSyncStore.getState().loadStatus(vaultPath);
+
+      // If active file was deleted, switch to first remaining file
+      if (activeFilePath === filePath) {
+        const remaining = get().files.filter((f) => !f.is_dir && f.path !== filePath);
+        if (remaining.length > 0) {
+          await get().selectFile(remaining[0].path);
+        } else {
+          set({ activeFilePath: null });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to delete episode:', e);
     }
   },
 
@@ -206,6 +266,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         metrics,
         lintIssues: issues,
       });
+
+      // Trigger scene graph analysis
+      const vaultPath = useVaultStore.getState().vaultPath;
+      if (vaultPath) {
+        useWorldGraphStore.getState().analyzeScene(vaultPath, body);
+      }
     } catch (e) {
       console.error('Failed to load file:', e);
     }
@@ -238,6 +304,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       await saveNovelFile(activePath, fullDocument);
       set({ isDirty: false });
       useVaultStore.getState().refreshGitStatus();
+
+      const vaultPath = useVaultStore.getState().vaultPath;
+      if (vaultPath) {
+        useWorldGraphStore.getState().analyzeScene(vaultPath, body);
+        useSyncStore.getState().loadStatus(vaultPath);
+      }
       useVaultStore.getState().refreshFiles();
     } catch (e) {
       console.error('Save failed:', e);
@@ -354,6 +426,154 @@ export const useAiStore = create<AiState>((set) => ({
       const msg = e instanceof Error ? e.message : String(e);
       set({ isReviewing: false, lastError: msg });
       console.error('AI Review Error:', e);
+    }
+  },
+}));
+
+// World Graph Store (Phase 7 GraphRAG & Visual World Studio)
+interface WorldGraphState {
+  graphData: GraphData;
+  selectedNodeId: string | null;
+  sceneAnalysis: SceneGraphAnalysis | null;
+  isLoading: boolean;
+  loadGraph: (vaultPath: string) => Promise<void>;
+  upsertNode: (vaultPath: string, node: WorldNode) => Promise<WorldNode | null>;
+  deleteNode: (vaultPath: string, nodeId: string) => Promise<void>;
+  upsertEdge: (vaultPath: string, edge: WorldEdge) => Promise<WorldEdge | null>;
+  deleteEdge: (vaultPath: string, edgeId: string) => Promise<void>;
+  analyzeScene: (vaultPath: string, text: string) => Promise<void>;
+  setSelectedNodeId: (id: string | null) => void;
+}
+
+export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
+  graphData: { nodes: [], edges: [] },
+  selectedNodeId: null,
+  sceneAnalysis: null,
+  isLoading: false,
+
+  loadGraph: async (vaultPath: string) => {
+    set({ isLoading: true });
+    try {
+      const data = await getWorldGraph(vaultPath);
+      set({ graphData: data, isLoading: false });
+    } catch (e) {
+      console.error('Failed to load world graph:', e);
+      set({ isLoading: false });
+    }
+  },
+
+  upsertNode: async (vaultPath: string, node: WorldNode) => {
+    try {
+      const saved = await upsertWorldNode(vaultPath, node);
+      await get().loadGraph(vaultPath);
+      useSyncStore.getState().loadStatus(vaultPath);
+      return saved;
+    } catch (e) {
+      console.error('Failed to upsert node:', e);
+      return null;
+    }
+  },
+
+  deleteNode: async (vaultPath: string, nodeId: string) => {
+    try {
+      await deleteWorldNode(vaultPath, nodeId);
+      if (get().selectedNodeId === nodeId) {
+        set({ selectedNodeId: null });
+      }
+      await get().loadGraph(vaultPath);
+      useSyncStore.getState().loadStatus(vaultPath);
+    } catch (e) {
+      console.error('Failed to delete node:', e);
+    }
+  },
+
+  upsertEdge: async (vaultPath: string, edge: WorldEdge) => {
+    try {
+      const saved = await upsertWorldEdge(vaultPath, edge);
+      await get().loadGraph(vaultPath);
+      useSyncStore.getState().loadStatus(vaultPath);
+      return saved;
+    } catch (e) {
+      console.error('Failed to upsert edge:', e);
+      return null;
+    }
+  },
+
+  deleteEdge: async (vaultPath: string, edgeId: string) => {
+    try {
+      await deleteWorldEdge(vaultPath, edgeId);
+      await get().loadGraph(vaultPath);
+      useSyncStore.getState().loadStatus(vaultPath);
+    } catch (e) {
+      console.error('Failed to delete edge:', e);
+    }
+  },
+
+  analyzeScene: async (vaultPath: string, text: string) => {
+    try {
+      const analysis = await analyzeSceneGraph(vaultPath, text);
+      set({ sceneAnalysis: analysis });
+    } catch (e) {
+      console.error('Failed to analyze scene graph:', e);
+    }
+  },
+
+  setSelectedNodeId: (id: string | null) => set({ selectedNodeId: id }),
+}));
+
+// Auto-Sync Store (Phase 7 Zero-Touch Cloud Sync)
+interface SyncState {
+  status: SyncStatus | null;
+  config: SyncConfig | null;
+  isLoading: boolean;
+  loadStatus: (vaultPath: string) => Promise<void>;
+  loadConfig: (vaultPath: string) => Promise<void>;
+  saveConfig: (vaultPath: string, config: SyncConfig) => Promise<void>;
+  triggerSync: (vaultPath: string, reason: string) => Promise<void>;
+}
+
+export const useSyncStore = create<SyncState>((set) => ({
+  status: null,
+  config: null,
+  isLoading: false,
+
+  loadStatus: async (vaultPath: string) => {
+    try {
+      const status = await getSyncStatus(vaultPath);
+      set({ status });
+    } catch (e) {
+      console.error('Failed to get sync status:', e);
+    }
+  },
+
+  loadConfig: async (vaultPath: string) => {
+    try {
+      const config = await getSyncConfig(vaultPath);
+      set({ config });
+    } catch (e) {
+      console.error('Failed to get sync config:', e);
+    }
+  },
+
+  saveConfig: async (vaultPath: string, config: SyncConfig) => {
+    try {
+      await saveSyncConfig(vaultPath, config);
+      set({ config });
+      const status = await triggerAutoSync(vaultPath, '同期設定の更新');
+      set({ status });
+    } catch (e) {
+      console.error('Failed to save sync config:', e);
+    }
+  },
+
+  triggerSync: async (vaultPath: string, reason: string) => {
+    set({ isLoading: true });
+    try {
+      const status = await triggerAutoSync(vaultPath, reason);
+      set({ status, isLoading: false });
+    } catch (e) {
+      console.error('Failed to trigger sync:', e);
+      set({ isLoading: false });
     }
   },
 }));

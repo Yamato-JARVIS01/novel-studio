@@ -27,6 +27,8 @@ futures-util = "0.3"
 keyring = "3.2"
 regex = "1.11"
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+petgraph = "0.6"
 thiserror = "2.0"
 log = "0.4"
 

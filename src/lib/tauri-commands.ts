@@ -185,3 +185,103 @@ export async function saveApiKey(provider: string, apiKey: string): Promise<void
 export async function getApiKey(provider: string): Promise<string | null> {
   return await invoke<string | null>('get_api_key_command', { provider });
 }
+
+// World Graph & GraphRAG Types & Commands
+export type WorldNodeType = 'character' | 'term' | 'plot' | 'location';
+
+export interface WorldNode {
+  id: string;
+  node_type: WorldNodeType | string;
+  name: string;
+  aliases: string[];
+  summary: string;
+  attributes: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorldEdge {
+  id: string;
+  source_id: string;
+  target_id: string;
+  relation_type: string;
+  description: string;
+}
+
+export interface GraphData {
+  nodes: WorldNode[];
+  edges: WorldEdge[];
+}
+
+export interface SceneGraphAnalysis {
+  active_nodes: WorldNode[];
+  active_edges: WorldEdge[];
+  consistency_hints: string[];
+}
+
+export interface SyncStatus {
+  state: 'synced' | 'syncing' | 'idle' | 'offline' | 'error' | string;
+  message: string;
+  last_synced_at?: string;
+  target_destinations: string[];
+}
+
+export interface SyncConfig {
+  auto_sync_enabled: boolean;
+  github_remote_url?: string;
+  github_pat?: string;
+  mirror_folder_path?: string;
+}
+
+export async function getWorldGraph(vaultPath: string): Promise<GraphData> {
+  return await invoke<GraphData>('get_world_graph', { vaultPath });
+}
+
+export async function upsertWorldNode(vaultPath: string, node: WorldNode): Promise<WorldNode> {
+  return await invoke<WorldNode>('upsert_world_node', { vaultPath, node });
+}
+
+export async function deleteWorldNode(vaultPath: string, nodeId: string): Promise<void> {
+  return await invoke<void>('delete_world_node', { vaultPath, nodeId });
+}
+
+export async function upsertWorldEdge(vaultPath: string, edge: WorldEdge): Promise<WorldEdge> {
+  return await invoke<WorldEdge>('upsert_world_edge', { vaultPath, edge });
+}
+
+export async function deleteWorldEdge(vaultPath: string, edgeId: string): Promise<void> {
+  return await invoke<void>('delete_world_edge', { vaultPath, edgeId });
+}
+
+export async function buildAiGraphContext(vaultPath: string, manuscriptText: string): Promise<string> {
+  return await invoke<string>('build_ai_graph_context', { vaultPath, manuscriptText });
+}
+
+export async function analyzeSceneGraph(vaultPath: string, manuscriptText: string): Promise<SceneGraphAnalysis> {
+  return await invoke<SceneGraphAnalysis>('analyze_scene_graph', { vaultPath, manuscriptText });
+}
+
+// GUI Episode Organizer & Sync Commands
+export async function reorderEpisodes(vaultPath: string, orderedPaths: string[]): Promise<void> {
+  return await invoke<void>('reorder_episodes', { vaultPath, orderedPaths });
+}
+
+export async function deleteEpisode(vaultPath: string, filePath: string): Promise<string> {
+  return await invoke<string>('delete_episode', { vaultPath, filePath });
+}
+
+export async function getSyncStatus(vaultPath: string): Promise<SyncStatus> {
+  return await invoke<SyncStatus>('get_sync_status', { vaultPath });
+}
+
+export async function getSyncConfig(vaultPath: string): Promise<SyncConfig> {
+  return await invoke<SyncConfig>('get_sync_config', { vaultPath });
+}
+
+export async function saveSyncConfig(vaultPath: string, config: SyncConfig): Promise<void> {
+  return await invoke<void>('save_sync_config', { vaultPath, config });
+}
+
+export async function triggerAutoSync(vaultPath: string, reason: string): Promise<SyncStatus> {
+  return await invoke<SyncStatus>('trigger_auto_sync', { vaultPath, reason });
+}

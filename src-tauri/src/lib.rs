@@ -1,14 +1,17 @@
 pub mod editor_engine;
 pub mod storage;
 pub mod ai;
+pub mod world_graph;
 
 use std::path::Path;
 use editor_engine::frontmatter::{extract_frontmatter, update_frontmatter, update_status, Frontmatter, SceneStatus};
 use editor_engine::jp_linter::{calculate_metrics, lint_japanese_text, LintConfig, LintIssue, ManuscriptMetrics};
 use storage::git_manager::{DiffFile, GitManager, GitStatusInfo};
+use storage::auto_sync::{AutoSyncEngine, SyncConfig, SyncStatus};
 use storage::{FileNode, StorageManager};
 use ai::provider::AiConfig;
 use ai::pipeline::{AiPipeline, RevisionResult};
+use world_graph::{GraphData, KuzuGraphEngine, SceneGraphAnalysis, WorldEdge, WorldNode};
 
 #[tauri::command]
 fn ping_command() -> String {
@@ -139,6 +142,88 @@ fn get_api_key_command(provider: String) -> Result<Option<String>, String> {
     Ok(AiPipeline::get_api_key(&provider))
 }
 
+// World Graph & GraphRAG IPC
+#[tauri::command]
+fn get_world_graph(vault_path: String) -> Result<GraphData, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.get_graph().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn upsert_world_node(vault_path: String, node: WorldNode) -> Result<WorldNode, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let result = engine.upsert_node(node).map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), &format!("設定ノード更新: {}", result.name));
+    Ok(result)
+}
+
+#[tauri::command]
+fn delete_world_node(vault_path: String, node_id: String) -> Result<(), String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.delete_node(&node_id).map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "設定ノード削除");
+    Ok(())
+}
+
+#[tauri::command]
+fn upsert_world_edge(vault_path: String, edge: WorldEdge) -> Result<WorldEdge, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let result = engine.upsert_edge(edge).map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), &format!("相関関係更新: {}", result.relation_type));
+    Ok(result)
+}
+
+#[tauri::command]
+fn delete_world_edge(vault_path: String, edge_id: String) -> Result<(), String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.delete_edge(&edge_id).map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "相関関係削除");
+    Ok(())
+}
+
+#[tauri::command]
+fn build_ai_graph_context(vault_path: String, manuscript_text: String) -> Result<String, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.build_ai_graph_context(&manuscript_text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn analyze_scene_graph(vault_path: String, manuscript_text: String) -> Result<SceneGraphAnalysis, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.analyze_scene(&manuscript_text).map_err(|e| e.to_string())
+}
+
+// GUI Episode Organizer & Sync IPC
+#[tauri::command]
+fn reorder_episodes(vault_path: String, ordered_paths: Vec<String>) -> Result<(), String> {
+    StorageManager::reorder_episodes(Path::new(&vault_path), &ordered_paths).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_episode(vault_path: String, file_path: String) -> Result<String, String> {
+    StorageManager::delete_episode(Path::new(&vault_path), Path::new(&file_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_sync_status(vault_path: String) -> Result<SyncStatus, String> {
+    Ok(AutoSyncEngine::get_status(Path::new(&vault_path)))
+}
+
+#[tauri::command]
+fn get_sync_config(vault_path: String) -> Result<SyncConfig, String> {
+    Ok(AutoSyncEngine::load_config(Path::new(&vault_path)))
+}
+
+#[tauri::command]
+fn save_sync_config(vault_path: String, config: SyncConfig) -> Result<(), String> {
+    AutoSyncEngine::save_config(Path::new(&vault_path), &config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn trigger_auto_sync(vault_path: String, reason: String) -> Result<SyncStatus, String> {
+    Ok(AutoSyncEngine::trigger_sync(Path::new(&vault_path), &reason))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -154,6 +239,8 @@ pub fn run() {
             save_novel_file,
             create_sample_project,
             create_new_episode,
+            reorder_episodes,
+            delete_episode,
             git_status,
             git_auto_commit,
             git_create_shadow_branch,
@@ -163,6 +250,17 @@ pub fn run() {
             ai_run_revision,
             save_api_key_command,
             get_api_key_command,
+            get_world_graph,
+            upsert_world_node,
+            delete_world_node,
+            upsert_world_edge,
+            delete_world_edge,
+            build_ai_graph_context,
+            analyze_scene_graph,
+            get_sync_status,
+            get_sync_config,
+            save_sync_config,
+            trigger_auto_sync,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
