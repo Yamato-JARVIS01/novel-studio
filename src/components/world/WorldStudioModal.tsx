@@ -340,10 +340,15 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     await deleteEdge(vaultPath, edgeId);
   };
 
-  // Node Dragging Handlers in SVG Canvas
-  const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+  // Node Dragging Handlers in SVG Canvas (120fps Pointer Capture)
+  const handleNodePointerDown = (e: React.PointerEvent, nodeId: string) => {
     e.stopPropagation();
     setDraggingNodeId(nodeId);
+    try {
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
     const curPos = nodePositions[nodeId] || { x: 400, y: 200 };
     dragStartRef.current = {
       clientX: e.clientX,
@@ -353,11 +358,11 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     };
   };
 
-  const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!draggingNodeId || !svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
     const scaleX = 800 / rect.width;
-    const scaleY = 520 / rect.height;
+    const scaleY = 510 / rect.height;
 
     const dx = (e.clientX - dragStartRef.current.clientX) * scaleX;
     const dy = (e.clientY - dragStartRef.current.clientY) * scaleY;
@@ -371,10 +376,15 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     }));
   };
 
-  const handleSvgMouseUp = async () => {
+  const handleSvgPointerUp = async (e: React.PointerEvent) => {
     if (!draggingNodeId || !vaultPath) {
       setDraggingNodeId(null);
       return;
+    }
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
     }
     const finalPos = nodePositions[draggingNodeId];
     const targetNode = graphData.nodes.find((n) => n.id === draggingNodeId);
@@ -834,8 +844,8 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 <svg
                   ref={svgRef}
                   viewBox="0 0 800 510"
-                  onMouseMove={handleSvgMouseMove}
-                  onMouseUp={handleSvgMouseUp}
+                  onPointerMove={handleSvgPointerMove}
+                  onPointerUp={handleSvgPointerUp}
                   className="w-full h-full max-h-[580px] select-none"
                   style={{ minWidth: '650px', cursor: draggingNodeId ? 'grabbing' : 'default' }}
                 >
@@ -983,9 +993,9 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                       <g
                         key={node.id}
                         transform={`translate(${pos.x}, ${pos.y})`}
-                        onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                        onPointerDown={(e) => handleNodePointerDown(e, node.id)}
                         onClick={() => openEditNode(node)}
-                        className="cursor-grab active:cursor-grabbing group"
+                        className="cursor-grab active:cursor-grabbing group touch-none"
                       >
                         {/* Shape: Diamond for Plot/Foreshadowing, Circle for others */}
                         {isPlot ? (
@@ -994,7 +1004,7 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                             fill={isSepia ? '#fff1f2' : '#241417'}
                             stroke={nodeColor}
                             strokeWidth="3"
-                            className="group-hover:scale-110 transition-transform shadow-md"
+                            className="group-hover:scale-110 shadow-md"
                           />
                         ) : (
                           <circle
@@ -1002,7 +1012,7 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                             fill={isSepia ? '#ffffff' : '#23221f'}
                             stroke={nodeColor}
                             strokeWidth="3"
-                            className="group-hover:scale-110 transition-transform shadow-md"
+                            className="group-hover:scale-110 shadow-md"
                           />
                         )}
 

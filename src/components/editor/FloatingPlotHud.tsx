@@ -116,8 +116,10 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
   const [nonTodoSuffix, setNonTodoSuffix] = useState('');
   const [newTodoInput, setNewTodoInput] = useState('');
 
-  // Dragging state
-  const [position, setPosition] = useState<{ x: number; y: number }>(() => {
+  // Dragging state with GPU Direct Transform (useRef + translate3d)
+  const hudRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingRef = useRef(false);
+  const initialPos = (() => {
     try {
       const saved = localStorage.getItem('novel_studio_hud_pos');
       if (saved) {
@@ -136,9 +138,10 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
       x: Math.max(20, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 450),
       y: 60,
     };
-  });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  })();
+  const currentPosRef = useRef<{ x: number; y: number }>(initialPos);
+  const [position, setPosition] = useState<{ x: number; y: number }>(initialPos);
+  const dragStartOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Scene Beats & Draft Expansion state
   const [generatedBeats, setGeneratedBeats] = useState<string | null>(null);
@@ -175,50 +178,64 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
     setTimeout(() => setIsSavedNotice(false), 2000);
   }, [updateFrontmatterField]);
 
-  // Draggable window logic with 60fps bounding
-  const handleMouseDown = (e: React.MouseEvent) => {
+  // GPU Direct Pointer Dragging (120fps direct transform, zero React re-renders during drag)
+  const handlePointerDown = (e: React.PointerEvent) => {
     // Only drag from header handle or empty header space
     if ((e.target as HTMLElement).closest('button, input, textarea')) return;
-    setIsDragging(true);
-    dragOffset.current = {
-      x: e.clientX - position.x,
-      y: e.clientY - position.y,
+    isDraggingRef.current = true;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+
+    dragStartOffset.current = {
+      x: e.clientX - currentPosRef.current.x,
+      y: e.clientY - currentPosRef.current.y,
     };
+
+    if (hudRef.current) {
+      hudRef.current.style.transition = 'none';
+      hudRef.current.style.willChange = 'transform';
+    }
     e.preventDefault();
   };
 
-  useEffect(() => {
-    if (!isDragging) return;
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const hudWidth = isMinimized ? 160 : 420;
-      const hudHeight = isMinimized ? 50 : 500;
-      const maxX = Math.max(10, window.innerWidth - hudWidth - 10);
-      const maxY = Math.max(10, window.innerHeight - hudHeight - 10);
+    const hudWidth = isMinimized ? 160 : 420;
+    const hudHeight = isMinimized ? 50 : 500;
+    const maxX = Math.max(10, window.innerWidth - hudWidth - 10);
+    const maxY = Math.max(10, window.innerHeight - hudHeight - 10);
 
-      const nextX = Math.min(Math.max(10, e.clientX - dragOffset.current.x), maxX);
-      const nextY = Math.min(Math.max(10, e.clientY - dragOffset.current.y), maxY);
+    const nextX = Math.min(Math.max(10, e.clientX - dragStartOffset.current.x), maxX);
+    const nextY = Math.min(Math.max(10, e.clientY - dragStartOffset.current.y), maxY);
 
-      setPosition({ x: nextX, y: nextY });
-    };
+    currentPosRef.current = { x: nextX, y: nextY };
 
-    const handleMouseUp = () => {
-      setIsDragging(false);
-      try {
-        localStorage.setItem('novel_studio_hud_pos', JSON.stringify(position));
-      } catch {
-        // ignore
-      }
-    };
+    if (hudRef.current) {
+      hudRef.current.style.transform = `translate3d(${nextX}px, ${nextY}px, 0)`;
+    }
+  };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
 
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging, position, isMinimized]);
+    if (hudRef.current) {
+      hudRef.current.style.willChange = 'auto';
+    }
+
+    const finalPos = currentPosRef.current;
+    setPosition(finalPos);
+    try {
+      localStorage.setItem('novel_studio_hud_pos', JSON.stringify(finalPos));
+    } catch {
+      // ignore
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -356,20 +373,23 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
   if (isMinimized) {
     return (
       <div
-        style={{ left: `${position.x}px`, top: `${position.y}px` }}
-        className="fixed z-40 animate-in fade-in zoom-in-95 duration-200 select-none"
+        ref={hudRef}
+        style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0)` }}
+        className="fixed top-0 left-0 z-40 select-none animate-in fade-in"
       >
         <div
-          onMouseDown={handleMouseDown}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-full border shadow-xl backdrop-blur-xl transition-all cursor-grab active:cursor-grabbing ${
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-full border shadow-xl backdrop-blur-xl cursor-grab active:cursor-grabbing touch-none select-none ${
             isSepia
-              ? 'bg-[#fbf9f5]/85 border-amber-900/20 text-amber-950 hover:bg-amber-100/90'
-              : 'bg-[#1e1d1a]/85 border-amber-500/30 text-amber-300 hover:bg-[#282723]/95 shadow-amber-950/40'
+              ? 'bg-[#fbf9f5]/90 border-amber-900/20 text-amber-950 hover:bg-amber-100/90'
+              : 'bg-[#1e1d1a]/90 border-amber-500/30 text-amber-300 hover:bg-[#282723]/95 shadow-amber-950/40'
           }`}
           title="掴んでドラッグ移動できます。クリックで展開"
         >
-          <GripHorizontal className="w-3.5 h-3.5 opacity-40" />
-          <Compass className="w-4 h-4 animate-spin-slow text-amber-500" />
+          <GripHorizontal className="w-3.5 h-3.5 opacity-40 shrink-0" />
+          <Compass className="w-4 h-4 animate-spin-slow text-amber-500 shrink-0" />
           <span className="text-xs font-bold tracking-wide">
             筋書きHUD {totalTodos > 0 && `(${completedTodos}/${totalTodos})`}
           </span>
@@ -386,25 +406,28 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
 
   return (
     <div
-      style={{ left: `${position.x}px`, top: `${position.y}px` }}
-      className="fixed z-40 w-[420px] max-w-[calc(100vw-2rem)] animate-in fade-in slide-in-from-top-3 duration-200"
+      ref={hudRef}
+      style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0)` }}
+      className="fixed top-0 left-0 z-40 w-[420px] max-w-[calc(100vw-2rem)] select-none animate-in fade-in"
     >
       <div
-        className={`rounded-2xl border shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col transition-all ${
+        className={`rounded-2xl border shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col ${
           isSepia
             ? 'bg-[#fcfbf9]/90 border-amber-900/20 text-neutral-800 shadow-amber-950/20'
             : 'bg-[#1b1a17]/95 border-amber-500/30 text-neutral-200 shadow-black/80 ring-1 ring-white/5'
         }`}
       >
-        {/* HUD Window Header (Drag Handle) */}
+        {/* HUD Window Header (Drag Handle with Pointer Capture) */}
         <div
-          onMouseDown={handleMouseDown}
-          className={`px-4 py-2.5 flex items-center justify-between border-b select-none cursor-grab active:cursor-grabbing ${
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className={`px-4 py-2.5 flex items-center justify-between border-b select-none cursor-grab active:cursor-grabbing touch-none ${
             isSepia ? 'border-amber-900/10 bg-amber-500/10' : 'border-neutral-800/80 bg-white/5'
           }`}
-          title="ここを掴んで画面内の好きな場所にドラッグできます"
+          title="ここを掴んで画面内の好きな場所にドラッグできます（120fps吸い付き追従）"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pointer-events-none">
             <div className="p-1 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400">
               <Compass className="w-4 h-4" />
             </div>
@@ -419,7 +442,7 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
               </div>
               <div className="text-[10px] opacity-60 flex items-center gap-1">
                 <GripHorizontal className="w-3 h-3 opacity-40 inline" />
-                <span>自由ドラッグ移動対応</span>
+                <span>GPU Direct 120fps追従</span>
               </div>
             </div>
           </div>

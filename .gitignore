@@ -1,6 +1,7 @@
 # Node
 node_modules/
 dist/
+dist-pages/
 dist-ssr/
 *.local
 *.tsbuildinfo
