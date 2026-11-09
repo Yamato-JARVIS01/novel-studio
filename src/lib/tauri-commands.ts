@@ -212,6 +212,12 @@ export interface WorldNode {
   full_text?: string;
   created_at: string;
   updated_at: string;
+  // Phase 11 extensions
+  image_data?: string;
+  long_note?: string;
+  phase_id?: string;
+  pos_x?: number;
+  pos_y?: number;
 }
 
 export interface WorldEdge {
@@ -220,6 +226,9 @@ export interface WorldEdge {
   target_id: string;
   relation_type: string;
   description: string;
+  // Phase 11 extensions
+  phase_id?: string;
+  color?: string;
 }
 
 export interface GraphData {

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   X,
   Plus,
@@ -15,6 +15,10 @@ import {
   FileText,
   RefreshCw,
   Save,
+  Image as ImageIcon,
+  Upload,
+  Move,
+  Calendar,
 } from 'lucide-react';
 import { useVaultStore, useWorldGraphStore, useEditorStore } from '../../store';
 import { WorldNode, WorldEdge, WorldNodeType } from '../../lib/tauri-commands';
@@ -23,6 +27,16 @@ interface WorldStudioModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
+// Predefined palette for plot/foreshadowing nodes
+const PLOT_COLOR_PALETTE = [
+  '#f43f5e', // rose
+  '#06b6d4', // cyan
+  '#a855f7', // purple
+  '#f59e0b', // amber
+  '#10b981', // emerald
+  '#3b82f6', // blue
+];
 
 export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
   const { vaultPath } = useVaultStore();
@@ -66,12 +80,20 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
   const [editingNode, setEditingNode] = useState<WorldNode | null>(null);
   const [isCreatingNode, setIsCreatingNode] = useState(false);
 
+  // Phase / Timeline state for multi-page graph
+  const [activePhase, setActivePhase] = useState<string>('all');
+  const [availablePhases, setAvailablePhases] = useState<string[]>(['第1話', '第2話', '第3話', 'クライマックス']);
+  const [newPhaseInput, setNewPhaseInput] = useState('');
+  const [isAddingPhase, setIsAddingPhase] = useState(false);
+
   // New Edge form state
   const [isAddingEdge, setIsAddingEdge] = useState(false);
   const [newEdgeSource, setNewEdgeSource] = useState('');
   const [newEdgeTarget, setNewEdgeTarget] = useState('');
   const [newEdgeRelation, setNewEdgeRelation] = useState('関係');
   const [newEdgeDescription, setNewEdgeDescription] = useState('');
+  const [newEdgePhase, setNewEdgePhase] = useState('');
+  const [newEdgeColor, setNewEdgeColor] = useState('#d97706');
 
   // Form states for node editing/creation
   const [formData, setFormData] = useState<{
@@ -83,6 +105,11 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     first_person: string;
     second_person: string;
     tone: string;
+    image_data: string;
+    long_note: string;
+    phase_id: string;
+    pos_x?: number;
+    pos_y?: number;
     extra_attrs: { key: string; val: string }[];
   }>({
     id: '',
@@ -93,8 +120,96 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     first_person: '',
     second_person: '',
     tone: '',
+    image_data: '',
+    long_note: '',
+    phase_id: '',
     extra_attrs: [],
   });
+
+  // Local graph positions map for dragging
+  const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const dragStartRef = useRef<{ clientX: number; clientY: number; nodeX: number; nodeY: number }>({
+    clientX: 0,
+    clientY: 0,
+    nodeX: 0,
+    nodeY: 0,
+  });
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // Initialize node positions based on saved pos_x/pos_y or tiered layout
+  useEffect(() => {
+    const nodes = graphData.nodes || [];
+    const positions: Record<string, { x: number; y: number }> = {};
+    const nonLocationNodes: WorldNode[] = [];
+    const locationNodes: WorldNode[] = [];
+
+    nodes.forEach((n) => {
+      if (n.pos_x != null && n.pos_y != null) {
+        positions[n.id] = { x: n.pos_x, y: n.pos_y };
+      } else if (n.node_type === 'location') {
+        locationNodes.push(n);
+      } else {
+        nonLocationNodes.push(n);
+      }
+    });
+
+    // Tier 1: Location nodes in bottom zone (y: 430)
+    locationNodes.forEach((n, idx) => {
+      const step = 800 / (locationNodes.length + 1);
+      positions[n.id] = { x: Math.round(step * (idx + 1)), y: 440 };
+    });
+
+    // Tier 2: Non-location nodes in upper circle (centerX: 400, centerY: 190)
+    const count = nonLocationNodes.length;
+    nonLocationNodes.forEach((n, idx) => {
+      const angle = (idx / (count || 1)) * 2 * Math.PI - Math.PI / 2;
+      const radius = Math.min(260, 120 + count * 15);
+      positions[n.id] = {
+        x: Math.round(400 + radius * Math.cos(angle)),
+        y: Math.round(190 + (radius * 0.7) * Math.sin(angle)),
+      };
+    });
+
+    setNodePositions(positions);
+  }, [graphData.nodes]);
+
+  // Image Upload handler with Canvas resizing to max 200px
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 200;
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          }
+        } else {
+          if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          setFormData((prev) => ({ ...prev, image_data: dataUrl }));
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const openCreateNode = (type: WorldNodeType = categoryFilter) => {
     setFormData({
@@ -106,6 +221,9 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
       first_person: '',
       second_person: '',
       tone: '',
+      image_data: '',
+      long_note: '',
+      phase_id: activePhase !== 'all' ? activePhase : '',
       extra_attrs: [],
     });
     setEditingNode(null);
@@ -134,6 +252,11 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
       first_person: fp,
       second_person: sp,
       tone: tone,
+      image_data: node.image_data || '',
+      long_note: node.long_note || '',
+      phase_id: node.phase_id || '',
+      pos_x: node.pos_x,
+      pos_y: node.pos_y,
       extra_attrs: extra,
     });
     setEditingNode(node);
@@ -164,6 +287,11 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
       aliases,
       summary: formData.summary.trim(),
       attributes,
+      image_data: formData.image_data || undefined,
+      long_note: formData.long_note || '',
+      phase_id: formData.phase_id || undefined,
+      pos_x: formData.pos_x ?? (formData.id ? nodePositions[formData.id]?.x : undefined),
+      pos_y: formData.pos_y ?? (formData.id ? nodePositions[formData.id]?.y : undefined),
       created_at: editingNode?.created_at || '',
       updated_at: '',
     };
@@ -193,6 +321,8 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
       target_id: newEdgeTarget,
       relation_type: newEdgeRelation.trim(),
       description: newEdgeDescription.trim(),
+      phase_id: newEdgePhase || undefined,
+      color: newEdgeColor || undefined,
     };
 
     await upsertEdge(vaultPath, edge);
@@ -201,6 +331,8 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     setNewEdgeTarget('');
     setNewEdgeRelation('関係');
     setNewEdgeDescription('');
+    setNewEdgePhase('');
+    setNewEdgeColor('#d97706');
   };
 
   const handleDeleteEdge = async (edgeId: string) => {
@@ -208,33 +340,66 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     await deleteEdge(vaultPath, edgeId);
   };
 
+  // Node Dragging Handlers in SVG Canvas
+  const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+    e.stopPropagation();
+    setDraggingNodeId(nodeId);
+    const curPos = nodePositions[nodeId] || { x: 400, y: 200 };
+    dragStartRef.current = {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      nodeX: curPos.x,
+      nodeY: curPos.y,
+    };
+  };
+
+  const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!draggingNodeId || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const scaleX = 800 / rect.width;
+    const scaleY = 520 / rect.height;
+
+    const dx = (e.clientX - dragStartRef.current.clientX) * scaleX;
+    const dy = (e.clientY - dragStartRef.current.clientY) * scaleY;
+
+    const newX = Math.round(Math.min(Math.max(30, dragStartRef.current.nodeX + dx), 770));
+    const newY = Math.round(Math.min(Math.max(30, dragStartRef.current.nodeY + dy), 490));
+
+    setNodePositions((prev) => ({
+      ...prev,
+      [draggingNodeId]: { x: newX, y: newY },
+    }));
+  };
+
+  const handleSvgMouseUp = async () => {
+    if (!draggingNodeId || !vaultPath) {
+      setDraggingNodeId(null);
+      return;
+    }
+    const finalPos = nodePositions[draggingNodeId];
+    const targetNode = graphData.nodes.find((n) => n.id === draggingNodeId);
+    if (finalPos && targetNode) {
+      const updated: WorldNode = {
+        ...targetNode,
+        pos_x: finalPos.x,
+        pos_y: finalPos.y,
+      };
+      await upsertNode(vaultPath, updated);
+    }
+    setDraggingNodeId(null);
+  };
+
   // Filtered nodes for card view
   const filteredNodes = useMemo(() => {
     return (graphData.nodes || []).filter((n) => n.node_type === categoryFilter);
   }, [graphData.nodes, categoryFilter]);
 
-  // Layout positions for graph visualizer
-  const graphPositions = useMemo(() => {
-    const nodes = graphData.nodes || [];
-    const count = nodes.length;
-    if (count === 0) return {};
-
-    const width = 800;
-    const height = 480;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = Math.min(centerX, centerY) * 0.72;
-
-    const positions: Record<string, { x: number; y: number }> = {};
-    nodes.forEach((n, idx) => {
-      const angle = (idx / count) * 2 * Math.PI - Math.PI / 2;
-      positions[n.id] = {
-        x: centerX + radius * Math.cos(angle),
-        y: centerY + radius * Math.sin(angle),
-      };
-    });
-    return positions;
-  }, [graphData.nodes]);
+  // Active / Filtered Edges for phase timeline
+  const visibleEdges = useMemo(() => {
+    const edges = graphData.edges || [];
+    if (activePhase === 'all') return edges;
+    return edges.filter((e) => !e.phase_id || e.phase_id === activePhase);
+  }, [graphData.edges, activePhase]);
 
   if (!isOpen) return null;
 
@@ -446,10 +611,36 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                         >
                           <div>
                             <div className="flex items-start justify-between gap-2 mb-2">
-                              <h3 className="font-bold text-sm tracking-wide flex items-center gap-1.5">
-                                <span>{node.name}</span>
-                              </h3>
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                {node.image_data ? (
+                                  <img
+                                    src={node.image_data}
+                                    alt={node.name}
+                                    className="w-10 h-10 rounded-full object-cover border border-amber-500/30 shrink-0 shadow-xs"
+                                  />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-sm flex items-center justify-center shrink-0 border border-amber-500/20">
+                                    {node.node_type === 'character'
+                                      ? '👤'
+                                      : node.node_type === 'plot'
+                                      ? '📌'
+                                      : node.node_type === 'location'
+                                      ? '🗺️'
+                                      : '🏛️'}
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <h3 className="font-bold text-sm tracking-wide truncate">
+                                    {node.name}
+                                  </h3>
+                                  {node.phase_id && (
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-600 dark:text-purple-300 font-medium">
+                                      {node.phase_id}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                                 <button
                                   onClick={() => openEditNode(node)}
                                   className={`p-1.5 rounded-lg border transition-all ${
@@ -503,6 +694,20 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                                 ))}
                               </div>
                             )}
+                            {/* Individual Long Note Snippet */}
+                            {node.long_note && node.long_note.trim().length > 0 && (
+                              <div
+                                className={`text-[10px] p-2 rounded-xl border mb-3 flex items-center justify-between ${
+                                  isSepia ? 'bg-amber-100/40 border-amber-200/60' : 'bg-[#181816] border-[#2c2a27]'
+                                }`}
+                              >
+                                <span className="flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400">
+                                  <FileText className="w-3 h-3" />
+                                  詳細長文ノートあり
+                                </span>
+                                <span className="opacity-60">{node.long_note.length}文字</span>
+                              </div>
+                            )}
                           </div>
 
                           {/* Connected Relations count */}
@@ -527,18 +732,93 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
             <div className="flex-1 flex flex-col overflow-hidden relative">
               {/* Visual Graph Toolbar */}
               <div
-                className={`px-6 py-2.5 border-b flex items-center justify-between shrink-0 z-10 ${
+                className={`px-6 py-2 border-b flex flex-wrap items-center justify-between gap-2 shrink-0 z-10 ${
                   isSepia ? 'bg-amber-50/70 border-amber-900/10' : 'bg-[#181816]/70 border-[#2c2a27]'
                 }`}
               >
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="font-semibold opacity-75">相関図ビジュアライザ</span>
-                  <span className="opacity-30">|</span>
-                  <span className="opacity-60">ノード数: {graphData.nodes.length}</span>
-                  <span className="opacity-60">関係線数: {graphData.edges.length}</span>
+                {/* Timeline / Phase Switcher */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                  <span className="text-[11px] font-bold opacity-60 mr-1 flex items-center gap-1 shrink-0">
+                    <Calendar className="w-3.5 h-3.5 text-amber-500" />
+                    時系列:
+                  </span>
+
+                  <button
+                    onClick={() => setActivePhase('all')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                      activePhase === 'all'
+                        ? 'bg-amber-600 text-white shadow-2xs'
+                        : 'opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    全編
+                  </button>
+
+                  {availablePhases.map((phase) => (
+                    <button
+                      key={phase}
+                      onClick={() => setActivePhase(phase)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                        activePhase === phase
+                          ? 'bg-amber-600 text-white shadow-2xs'
+                          : 'opacity-60 hover:opacity-100'
+                      }`}
+                    >
+                      {phase}
+                    </button>
+                  ))}
+
+                  {isAddingPhase ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={newPhaseInput}
+                        onChange={(e) => setNewPhaseInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newPhaseInput.trim()) {
+                            if (!availablePhases.includes(newPhaseInput.trim())) {
+                              setAvailablePhases([...availablePhases, newPhaseInput.trim()]);
+                              setActivePhase(newPhaseInput.trim());
+                            }
+                            setNewPhaseInput('');
+                            setIsAddingPhase(false);
+                          }
+                        }}
+                        placeholder="第4話..."
+                        className={`px-2 py-0.5 rounded text-xs border outline-none w-20 ${
+                          isSepia ? 'bg-white border-amber-300' : 'bg-[#222] border-neutral-700'
+                        }`}
+                      />
+                      <button
+                        onClick={() => {
+                          if (newPhaseInput.trim() && !availablePhases.includes(newPhaseInput.trim())) {
+                            setAvailablePhases([...availablePhases, newPhaseInput.trim()]);
+                            setActivePhase(newPhaseInput.trim());
+                          }
+                          setNewPhaseInput('');
+                          setIsAddingPhase(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-amber-600 text-white text-[10px] font-bold"
+                      >
+                        追加
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setIsAddingPhase(true)}
+                      className="px-2 py-1 rounded-lg text-[10px] opacity-60 hover:opacity-100 border border-dashed border-current/20 flex items-center gap-0.5"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>フェーズ</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <span className="text-[10px] opacity-50 flex items-center gap-1 hidden md:flex">
+                    <Move className="w-3 h-3" />
+                    ノードを掴んでドラッグ移動（座標保存）
+                  </span>
                   <button
                     onClick={() => setIsAddingEdge(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-all"
@@ -549,31 +829,96 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 </div>
               </div>
 
-              {/* SVG Canvas */}
-              <div className="flex-1 overflow-auto flex items-center justify-center p-4">
+              {/* SVG Canvas with Location Zone and Draggable Diamond/Circle Nodes */}
+              <div className="flex-1 overflow-auto flex items-center justify-center p-3">
                 <svg
-                  viewBox="0 0 800 480"
-                  className="w-full h-full max-h-[560px] select-none"
-                  style={{ minWidth: '600px' }}
+                  ref={svgRef}
+                  viewBox="0 0 800 510"
+                  onMouseMove={handleSvgMouseMove}
+                  onMouseUp={handleSvgMouseUp}
+                  className="w-full h-full max-h-[580px] select-none"
+                  style={{ minWidth: '650px', cursor: draggingNodeId ? 'grabbing' : 'default' }}
                 >
                   <defs>
                     <marker
-                      id="arrowhead"
+                      id="arrowhead-amber"
                       markerWidth="10"
                       markerHeight="7"
-                      refX="26"
+                      refX="30"
                       refY="3.5"
                       orient="auto"
                     >
                       <polygon points="0 0, 10 3.5, 0 7" fill="#d97706" />
                     </marker>
+                    <marker
+                      id="arrowhead-rose"
+                      markerWidth="10"
+                      markerHeight="7"
+                      refX="30"
+                      refY="3.5"
+                      orient="auto"
+                    >
+                      <polygon points="0 0, 10 3.5, 0 7" fill="#f43f5e" />
+                    </marker>
+                    <marker
+                      id="arrowhead-purple"
+                      markerWidth="10"
+                      markerHeight="7"
+                      refX="30"
+                      refY="3.5"
+                      orient="auto"
+                    >
+                      <polygon points="0 0, 10 3.5, 0 7" fill="#8b5cf6" />
+                    </marker>
+
+                    {/* Clip paths for circular node avatars */}
+                    {graphData.nodes.map((n) => (
+                      <clipPath key={`clip-${n.id}`} id={`clip-${n.id}`}>
+                        <circle cx="0" cy="0" r="23" />
+                      </clipPath>
+                    ))}
                   </defs>
 
+                  {/* Tier 1: Location Stage Zone (Bottom) */}
+                  <rect
+                    x="20"
+                    y="380"
+                    width="760"
+                    height="115"
+                    rx="16"
+                    fill={isSepia ? '#fef3c7' : '#1c1a17'}
+                    stroke={isSepia ? '#d97706' : '#78350f'}
+                    strokeWidth="1.5"
+                    strokeDasharray="6 4"
+                    opacity="0.45"
+                  />
+                  <text
+                    x="35"
+                    y="402"
+                    fontSize="11"
+                    fontWeight="bold"
+                    fill={isSepia ? '#92400e' : '#f59e0b'}
+                    opacity="0.8"
+                    className="pointer-events-none"
+                  >
+                    🗺️ 舞台・場所レイヤー（下層ステージ枠）
+                  </text>
+
                   {/* Edges */}
-                  {(graphData.edges || []).map((edge) => {
-                    const src = graphPositions[edge.source_id];
-                    const tgt = graphPositions[edge.target_id];
+                  {visibleEdges.map((edge) => {
+                    const src = nodePositions[edge.source_id];
+                    const tgt = nodePositions[edge.target_id];
                     if (!src || !tgt) return null;
+
+                    const srcNode = graphData.nodes.find((n) => n.id === edge.source_id);
+                    const tgtNode = graphData.nodes.find((n) => n.id === edge.target_id);
+                    const isForeshadowing =
+                      srcNode?.node_type === 'plot' ||
+                      tgtNode?.node_type === 'plot' ||
+                      edge.relation_type.includes('伏線');
+
+                    const edgeColor = edge.color || (isForeshadowing ? '#f43f5e' : '#d97706');
+                    const markerId = isForeshadowing ? 'arrowhead-rose' : 'arrowhead-amber';
 
                     const midX = (src.x + tgt.x) / 2;
                     const midY = (src.y + tgt.y) / 2;
@@ -585,23 +930,23 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                           y1={src.y}
                           x2={tgt.x}
                           y2={tgt.y}
-                          stroke="#d97706"
-                          strokeWidth="2"
-                          strokeDasharray={edge.relation_type.includes('伏線') ? '4 3' : undefined}
-                          opacity="0.6"
-                          markerEnd="url(#arrowhead)"
-                          className="group-hover:opacity-100 group-hover:stroke-amber-500 transition-all"
+                          stroke={edgeColor}
+                          strokeWidth={isForeshadowing ? '2.5' : '2'}
+                          strokeDasharray={isForeshadowing ? '5 4' : undefined}
+                          opacity={isForeshadowing ? '0.85' : '0.6'}
+                          markerEnd={`url(#${markerId})`}
+                          className="group-hover:opacity-100 group-hover:stroke-amber-400 transition-all"
                         />
                         <rect
-                          x={midX - 35}
+                          x={midX - 38}
                           y={midY - 10}
-                          width="70"
+                          width="76"
                           height="20"
                           rx="6"
                           fill={isSepia ? '#fef9c3' : '#262420'}
-                          stroke="#d97706"
+                          stroke={edgeColor}
                           strokeWidth="1"
-                          opacity="0.9"
+                          opacity="0.95"
                         />
                         <text
                           x={midX}
@@ -618,35 +963,80 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                   })}
 
                   {/* Nodes */}
-                  {(graphData.nodes || []).map((node) => {
-                    const pos = graphPositions[node.id];
+                  {graphData.nodes.map((node) => {
+                    const pos = nodePositions[node.id];
                     if (!pos) return null;
 
-                    const color =
-                      node.node_type === 'character'
-                        ? '#d97706'
-                        : node.node_type === 'plot'
-                        ? '#8b5cf6'
-                        : node.node_type === 'location'
-                        ? '#10b981'
-                        : '#3b82f6';
+                    const isPlot = node.node_type === 'plot';
+                    const isLocation = node.node_type === 'location';
+                    const isCharacter = node.node_type === 'character';
+
+                    const nodeColor = isCharacter
+                      ? '#d97706'
+                      : isPlot
+                      ? '#f43f5e'
+                      : isLocation
+                      ? '#10b981'
+                      : '#3b82f6';
 
                     return (
                       <g
                         key={node.id}
                         transform={`translate(${pos.x}, ${pos.y})`}
+                        onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                         onClick={() => openEditNode(node)}
-                        className="cursor-pointer group"
+                        className="cursor-grab active:cursor-grabbing group"
                       >
-                        <circle
-                          r="26"
-                          fill={isSepia ? '#ffffff' : '#23221f'}
-                          stroke={color}
-                          strokeWidth="3"
-                          className="group-hover:scale-110 transition-transform shadow-md"
-                        />
+                        {/* Shape: Diamond for Plot/Foreshadowing, Circle for others */}
+                        {isPlot ? (
+                          <polygon
+                            points="0,-30 30,0 0,30 -30,0"
+                            fill={isSepia ? '#fff1f2' : '#241417'}
+                            stroke={nodeColor}
+                            strokeWidth="3"
+                            className="group-hover:scale-110 transition-transform shadow-md"
+                          />
+                        ) : (
+                          <circle
+                            r="26"
+                            fill={isSepia ? '#ffffff' : '#23221f'}
+                            stroke={nodeColor}
+                            strokeWidth="3"
+                            className="group-hover:scale-110 transition-transform shadow-md"
+                          />
+                        )}
+
+                        {/* Image avatar if present, else icon */}
+                        {node.image_data ? (
+                          <image
+                            href={node.image_data}
+                            x="-23"
+                            y="-23"
+                            width="46"
+                            height="46"
+                            clipPath={`url(#clip-${node.id})`}
+                            className="pointer-events-none"
+                          />
+                        ) : (
+                          <text
+                            y="4"
+                            textAnchor="middle"
+                            fontSize="14"
+                            className="pointer-events-none"
+                          >
+                            {isCharacter
+                              ? '👤'
+                              : isPlot
+                              ? '📌'
+                              : isLocation
+                              ? '🗺️'
+                              : '🏛️'}
+                          </text>
+                        )}
+
+                        {/* Node Label */}
                         <text
-                          y="-34"
+                          y={isPlot ? '-36' : '-32'}
                           textAnchor="middle"
                           fontSize="11"
                           fontWeight="bold"
@@ -654,20 +1044,6 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                           className="group-hover:fill-amber-500 transition-colors pointer-events-none"
                         >
                           {node.name}
-                        </text>
-                        <text
-                          y="4"
-                          textAnchor="middle"
-                          fontSize="14"
-                          className="pointer-events-none"
-                        >
-                          {node.node_type === 'character'
-                            ? '👤'
-                            : node.node_type === 'plot'
-                            ? '📌'
-                            : node.node_type === 'location'
-                            ? '🗺️'
-                            : '🏛️'}
                         </text>
                       </g>
                     );
@@ -677,13 +1053,22 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
 
               {/* Edge quick table at bottom */}
               <div
-                className={`p-3 border-t max-h-36 overflow-y-auto text-xs shrink-0 ${
+                className={`p-3 border-t max-h-32 overflow-y-auto text-xs shrink-0 ${
                   isSepia ? 'bg-[#f5f1e8] border-amber-900/10' : 'bg-[#181816] border-[#2c2a27]'
                 }`}
               >
-                <div className="font-semibold mb-1 opacity-70">登録済み相関関係一覧:</div>
+                <div className="flex items-center justify-between mb-1 opacity-70">
+                  <span className="font-semibold">
+                    登録済み相関関係 ({visibleEdges.length}件 / 全{graphData.edges.length}件):
+                  </span>
+                  {activePhase !== 'all' && (
+                    <span className="text-[10px] text-amber-500 font-bold">
+                      「{activePhase}」でフィルタ中
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {(graphData.edges || []).map((e) => {
+                  {visibleEdges.map((e) => {
                     const src = graphData.nodes.find((n) => n.id === e.source_id)?.name || '不明';
                     const tgt = graphData.nodes.find((n) => n.id === e.target_id)?.name || '不明';
                     return (
@@ -696,9 +1081,17 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                         <span className="font-semibold">{src}</span>
                         <ArrowRight className="w-3 h-3 text-amber-500" />
                         <span className="font-semibold">{tgt}</span>
-                        <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold">
+                        <span
+                          style={{ color: e.color || '#d97706' }}
+                          className="px-1.5 py-0.2 rounded bg-amber-500/15 font-bold"
+                        >
                           {e.relation_type}
                         </span>
+                        {e.phase_id && (
+                          <span className="text-[9px] px-1 rounded bg-purple-500/15 text-purple-600 dark:text-purple-300">
+                            {e.phase_id}
+                          </span>
+                        )}
                         <button
                           onClick={() => handleDeleteEdge(e.id)}
                           className="ml-1 text-red-500 hover:text-red-700"
@@ -872,7 +1265,7 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
         {isCreatingNode && (
           <div className="absolute inset-0 z-20 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
             <div
-              className={`w-full max-w-lg rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 max-h-[85vh] overflow-y-auto ${
+              className={`w-full max-w-lg rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 max-h-[88vh] overflow-y-auto ${
                 isSepia ? 'bg-[#fbf9f5] border-amber-900/20 text-[#2a2622]' : 'bg-[#22211f] border-[#383531] text-[#e8e4de]'
               }`}
             >
@@ -888,7 +1281,54 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 </button>
               </div>
 
-              {/* Type & Name */}
+              {/* Character / Node Avatar Image Upload */}
+              <div
+                className={`p-3 rounded-xl border flex items-center gap-3.5 ${
+                  isSepia ? 'bg-amber-50/60 border-amber-200/80' : 'bg-[#181816] border-[#333]'
+                }`}
+              >
+                {formData.image_data ? (
+                  <img
+                    src={formData.image_data}
+                    alt="Preview"
+                    className="w-14 h-14 rounded-full object-cover border-2 border-amber-500 shrink-0 shadow-sm"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-full bg-amber-500/15 border-2 border-dashed border-amber-500/40 flex items-center justify-center text-amber-500 shrink-0">
+                    <ImageIcon className="w-6 h-6" />
+                  </div>
+                )}
+                <div className="flex-1 space-y-1">
+                  <span className="text-xs font-semibold block">設定ビジュアル・人物アイコン</span>
+                  <p className="text-[10px] opacity-60">カード一覧・相関図・右インスペクタに表示されます</p>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <label
+                      htmlFor="node-img-file-input"
+                      className="cursor-pointer px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-amber-600 hover:bg-amber-500 text-white flex items-center gap-1 shadow-2xs transition-all"
+                    >
+                      <Upload className="w-3 h-3" />
+                      <span>{formData.image_data ? '画像を変更' : '画像をアップロード'}</span>
+                    </label>
+                    <input
+                      id="node-img-file-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                    />
+                    {formData.image_data && (
+                      <button
+                        onClick={() => setFormData((prev) => ({ ...prev, image_data: '' }))}
+                        className="px-2 py-1 rounded-lg text-[10px] text-red-500 hover:bg-red-500/10 transition-colors"
+                      >
+                        削除
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Type, Name & Phase */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold opacity-70 mb-1 block">カテゴリ</label>
@@ -920,20 +1360,42 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 </div>
               </div>
 
-              {/* Aliases */}
-              <div>
-                <label className="text-xs font-semibold opacity-70 mb-1 block">
-                  別名・呼称（カンマ区切り、AIが自動検出）
-                </label>
-                <input
-                  type="text"
-                  value={formData.aliases}
-                  onChange={(e) => setFormData({ ...formData, aliases: e.target.value })}
-                  placeholder="例: 男, 若者, 主人公"
-                  className={`w-full px-3 py-2 rounded-xl text-xs border ${
-                    isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
-                  }`}
-                />
+              {/* Aliases & Timeline Phase */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold opacity-70 mb-1 block">
+                    別名・呼称（カンマ区切り）
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.aliases}
+                    onChange={(e) => setFormData({ ...formData, aliases: e.target.value })}
+                    placeholder="例: 男, 若者, 主人公"
+                    className={`w-full px-3 py-2 rounded-xl text-xs border ${
+                      isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold opacity-70 mb-1 block">
+                    時系列フェーズ / 話数
+                  </label>
+                  <select
+                    value={formData.phase_id}
+                    onChange={(e) => setFormData({ ...formData, phase_id: e.target.value })}
+                    className={`w-full px-3 py-2 rounded-xl text-xs border ${
+                      isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                    }`}
+                  >
+                    <option value="">全編共通</option>
+                    {availablePhases.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {/* Summary */}
@@ -942,7 +1404,7 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 <textarea
                   value={formData.summary}
                   onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
-                  rows={3}
+                  rows={2}
                   placeholder="登場人物の動機、世界観ルール、プロットの目的など"
                   className={`w-full px-3 py-2 rounded-xl text-xs border resize-none leading-relaxed ${
                     isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
@@ -1001,6 +1463,28 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 </div>
               )}
 
+              {/* Individual Long-form Note per Card */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold opacity-70 flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5 text-amber-500" />
+                    📝 詳細長文設定ノート（文字数無制限・GraphRAG自動反映）
+                  </label>
+                  <span className="text-[10px] opacity-50 font-mono">
+                    {formData.long_note.length}文字
+                  </span>
+                </div>
+                <textarea
+                  value={formData.long_note}
+                  onChange={(e) => setFormData({ ...formData, long_note: e.target.value })}
+                  rows={5}
+                  placeholder="この人物の生い立ち、詳細な過去の経緯、心理描写、外見・衣装の特徴、秘密など何千文字でも自由に書き込めます。AI推敲時のGraphRAGコンテキストにも自動注入されます..."
+                  className={`w-full p-2.5 rounded-xl text-xs border font-mono resize-none leading-relaxed ${
+                    isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                  }`}
+                />
+              </div>
+
               {/* Actions */}
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-current/10">
                 <button
@@ -1022,7 +1506,6 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
             </div>
           </div>
         )}
-
         {/* Add Edge Modal */}
         {isAddingEdge && (
           <div className="absolute inset-0 z-20 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
@@ -1039,42 +1522,44 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
               </div>
 
               <div className="space-y-3">
-                <div>
-                  <label className="text-xs font-semibold opacity-70 mb-1 block">起点ノード</label>
-                  <select
-                    value={newEdgeSource}
-                    onChange={(e) => setNewEdgeSource(e.target.value)}
-                    className={`w-full px-3 py-2 rounded-xl text-xs border ${
-                      isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
-                    }`}
-                  >
-                    <option value="">選択してください</option>
-                    {graphData.nodes.map((n) => (
-                      <option key={n.id} value={n.id}>
-                        {n.name} ({n.node_type})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold opacity-70 mb-1 block">対象ノード</label>
-                  <select
-                    value={newEdgeTarget}
-                    onChange={(e) => setNewEdgeTarget(e.target.value)}
-                    className={`w-full px-3 py-2 rounded-xl text-xs border ${
-                      isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
-                    }`}
-                  >
-                    <option value="">選択してください</option>
-                    {graphData.nodes
-                      .filter((n) => n.id !== newEdgeSource)
-                      .map((n) => (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-semibold opacity-70 mb-1 block">起点ノード</label>
+                    <select
+                      value={newEdgeSource}
+                      onChange={(e) => setNewEdgeSource(e.target.value)}
+                      className={`w-full px-3 py-2 rounded-xl text-xs border ${
+                        isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                      }`}
+                    >
+                      <option value="">選択</option>
+                      {graphData.nodes.map((n) => (
                         <option key={n.id} value={n.id}>
                           {n.name} ({n.node_type})
                         </option>
                       ))}
-                  </select>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold opacity-70 mb-1 block">対象ノード</label>
+                    <select
+                      value={newEdgeTarget}
+                      onChange={(e) => setNewEdgeTarget(e.target.value)}
+                      className={`w-full px-3 py-2 rounded-xl text-xs border ${
+                        isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                      }`}
+                    >
+                      <option value="">選択</option>
+                      {graphData.nodes
+                        .filter((n) => n.id !== newEdgeSource)
+                        .map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.name} ({n.node_type})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                 </div>
 
                 <div>
@@ -1090,6 +1575,43 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                       isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
                     }`}
                   />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-semibold opacity-70 mb-1 block">時系列フェーズ</label>
+                    <select
+                      value={newEdgePhase}
+                      onChange={(e) => setNewEdgePhase(e.target.value)}
+                      className={`w-full px-3 py-2 rounded-xl text-xs border ${
+                        isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                      }`}
+                    >
+                      <option value="">全編共通</option>
+                      {availablePhases.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold opacity-70 mb-1 block">関係線の色</label>
+                    <div className="flex items-center gap-1.5 pt-1">
+                      {PLOT_COLOR_PALETTE.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setNewEdgeColor(c)}
+                          style={{ backgroundColor: c }}
+                          className={`w-5 h-5 rounded-full transition-transform ${
+                            newEdgeColor === c ? 'scale-125 ring-2 ring-white ring-offset-1' : 'opacity-70 hover:opacity-100'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 <div>

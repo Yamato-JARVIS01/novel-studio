@@ -8,7 +8,6 @@ import { rubyExtension } from './rubyExtension';
 import { FloatingPlotHud } from './FloatingPlotHud';
 import { TimeMachineModal } from './TimeMachineModal';
 import {
-  Save,
   Check,
   Type,
   Maximize2,
@@ -39,11 +38,9 @@ interface EditorProps {
 export function Editor({ onOpenSettings }: EditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     body,
-    isDirty,
     fontSize,
     fontFamily,
     theme,
@@ -198,14 +195,31 @@ export function Editor({ onOpenSettings }: EditorProps) {
         if (update.docChanged) {
           const newDoc = update.state.doc.toString();
           updateBody(newDoc);
-
-          // Typing trigger for Zen Focus auto fadeout
+          // Maintain Zen Focus typing mode without auto-restoring timer
           setIsTyping(true);
-          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-          typingTimerRef.current = setTimeout(() => {
-            setIsTyping(false);
-          }, 2400);
         }
+      }),
+      EditorView.domEventHandlers({
+        focus: () => {
+          setIsTyping(true);
+        },
+        compositionstart: () => {
+          // IME conversion started: lock Zen focus completely
+          setIsTyping(true);
+        },
+        compositionend: () => {
+          // IME conversion completed: keep Zen focus
+          setIsTyping(true);
+        },
+        keydown: (e) => {
+          // Esc or Cmd+B / Ctrl+B to exit/toggle Zen focus
+          if (e.key === 'Escape' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b')) {
+            e.preventDefault();
+            const currentZen = useEditorStore.getState().isZenFocus;
+            useEditorStore.getState().setIsZenFocus(!currentZen);
+            useEditorStore.getState().setIsTyping(false);
+          }
+        },
       }),
     ];
 
@@ -267,37 +281,26 @@ export function Editor({ onOpenSettings }: EditorProps) {
     >
       {/* Top Author Toolbar */}
       <div
-        className={`h-11 border-b px-4 flex items-center justify-between select-none z-20 backdrop-blur-md ${
+        className={`h-11 border-b px-3 flex items-center justify-between select-none z-20 backdrop-blur-md overflow-hidden ${
           isSepia
             ? 'bg-[#fbf9f5]/85 border-amber-900/10'
             : 'bg-[#1a1917]/85 border-[#2c2a27]'
         }`}
       >
-        <div className="flex items-center space-x-3 text-xs">
-          <span className="font-semibold truncate max-w-sm">
+        <div className="flex items-center space-x-2 text-xs shrink-0 overflow-hidden pr-2">
+          <span className="font-semibold truncate max-w-[160px] text-amber-800 dark:text-amber-200">
             {activeFilePath
               ? activeFilePath.split('/').pop()?.replace(/\.md$|\.txt$/, '')
               : '執筆待機中'}
           </span>
-          {isDirty ? (
-            <span className="flex items-center text-[11px] text-amber-600 dark:text-amber-400 font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse" />
-              編集中（Cmd+Sで即時保存）
-            </span>
-          ) : (
-            <span className="flex items-center text-[11px] opacity-40">
-              <Check className="w-3 h-3 mr-1 text-emerald-500" />
-              自動保存済み
-            </span>
-          )}
         </div>
 
-        {/* Toolbar Controls */}
-        <div className="flex items-center space-x-2">
+        {/* Toolbar Controls: completely prevents wrapping/truncation with whitespace-nowrap and overflow-x-auto */}
+        <div className="flex items-center space-x-1.5 overflow-x-auto no-scrollbar py-0.5">
           {/* Floating Plot HUD Button */}
           <button
             onClick={() => setIsPlotHudOpen(!isPlotHudOpen)}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all whitespace-nowrap shrink-0 ${
               isPlotHudOpen
                 ? 'bg-amber-600 text-white border-amber-600 shadow-amber-900/30'
                 : isSepia
@@ -306,7 +309,7 @@ export function Editor({ onOpenSettings }: EditorProps) {
             }`}
             title="全体＆話別筋書きのフローティングHUD"
           >
-            <Compass className="w-3.5 h-3.5 text-amber-500" />
+            <Compass className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span>筋書きHUD</span>
           </button>
 
@@ -314,14 +317,14 @@ export function Editor({ onOpenSettings }: EditorProps) {
           <button
             onClick={() => setIsTimeMachineOpen(true)}
             disabled={!activeFilePath}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all whitespace-nowrap shrink-0 ${
               isSepia
                 ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-neutral-700'
                 : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-neutral-300'
             } disabled:opacity-40`}
             title="過去のスナップショットをタイムトラベル・復元"
           >
-            <History className="w-3.5 h-3.5 text-amber-500" />
+            <History className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span>タイムマシン</span>
           </button>
 
@@ -329,14 +332,14 @@ export function Editor({ onOpenSettings }: EditorProps) {
           <button
             onClick={toggleVerticalPreview}
             disabled={!activeFilePath}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all whitespace-nowrap shrink-0 ${
               isSepia
                 ? 'bg-amber-100/70 hover:bg-amber-200/70 border-amber-300 text-amber-950'
                 : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-amber-300'
             } disabled:opacity-40`}
             title="文庫本のように美しい縦書きで確認"
           >
-            <BookMarked className="w-3.5 h-3.5" />
+            <BookMarked className="w-3.5 h-3.5 shrink-0" />
             <span>縦書きプレビュー</span>
           </button>
 
@@ -348,7 +351,7 @@ export function Editor({ onOpenSettings }: EditorProps) {
               }
             }}
             disabled={isSyncingManuscript || !vaultPath || !body}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all whitespace-nowrap shrink-0 ${
               isSepia
                 ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-neutral-700'
                 : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-neutral-300'
@@ -356,9 +359,9 @@ export function Editor({ onOpenSettings }: EditorProps) {
             title="原稿本文から新キャラ・重要用語を抽出し、設定ノートとグラフDBへ自動還元"
           >
             {isSyncingManuscript ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500 shrink-0" />
             ) : (
-              <RefreshCw className="w-3.5 h-3.5 text-amber-500" />
+              <RefreshCw className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             )}
             <span>設定還元</span>
           </button>
@@ -367,36 +370,36 @@ export function Editor({ onOpenSettings }: EditorProps) {
           <button
             onClick={() => openExportModal()}
             disabled={!vaultPath}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border shadow-xs transition-all whitespace-nowrap shrink-0 ${
               isSepia
                 ? 'bg-amber-100/70 hover:bg-amber-200/70 border-amber-300 text-amber-950'
                 : 'bg-[#282623] hover:bg-[#33302c] border-[#44403a] text-amber-300'
             } disabled:opacity-40`}
             title="公募提出原稿やWeb小説サイト記法（カクヨム/なろう/青空文庫/縦書きHTML）へ一括出力"
           >
-            <FileDown className="w-3.5 h-3.5 text-amber-500" />
+            <FileDown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span>原稿出力</span>
           </button>
 
           {/* AI Editing Dropdown */}
-          <div className="relative">
+          <div className="relative shrink-0">
             <div className="flex items-center">
               <button
                 onClick={() => handleTriggerAi()}
                 disabled={isReviewing || !activeFilePath}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-l-lg text-xs font-semibold bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white shadow-sm disabled:opacity-40 transition-all"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-l-lg text-xs font-semibold bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white shadow-sm disabled:opacity-40 transition-all whitespace-nowrap shrink-0"
               >
                 {isReviewing ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                 ) : (
-                  <Sparkles className="w-3.5 h-3.5" />
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
                 )}
-                <span>{isReviewing ? 'AIが推敲中...' : 'AI推敲'}</span>
+                <span>{isReviewing ? '推敲中...' : 'AI推敲'}</span>
               </button>
               <button
                 onClick={() => setIsAiMenuOpen(!isAiMenuOpen)}
                 disabled={isReviewing || !activeFilePath}
-                className="px-1.5 py-1 rounded-r-lg bg-amber-700 hover:bg-amber-600 text-white border-l border-amber-600/40 text-xs disabled:opacity-40"
+                className="px-1.5 py-1 rounded-r-lg bg-amber-700 hover:bg-amber-600 text-white border-l border-amber-600/40 text-xs disabled:opacity-40 shrink-0"
               >
                 <ChevronDown className="w-3 h-3" />
               </button>
@@ -438,20 +441,20 @@ export function Editor({ onOpenSettings }: EditorProps) {
           {/* Theme Toggle (Warm Dark / Cream Sepia) */}
           <button
             onClick={toggleTheme}
-            className={`p-1.5 rounded-lg border transition-colors ${
+            className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
               isSepia
                 ? 'bg-amber-100/60 border-amber-200 text-amber-900 hover:bg-amber-200/60'
                 : 'bg-[#252321] border-[#383531] text-amber-300 hover:bg-[#2f2c29]'
             }`}
             title={isSepia ? 'ウォームダークに切り替え' : '和紙セピア調に切り替え'}
           >
-            {isSepia ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+            {isSepia ? <Moon className="w-3.5 h-3.5 shrink-0" /> : <Sun className="w-3.5 h-3.5 shrink-0" />}
           </button>
 
           {/* Line Numbers Toggle */}
           <button
             onClick={toggleLineNumbers}
-            className={`p-1.5 rounded-lg border transition-colors ${
+            className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
               showLineNumbers
                 ? 'bg-amber-600 text-white border-amber-600'
                 : isSepia
@@ -460,27 +463,27 @@ export function Editor({ onOpenSettings }: EditorProps) {
             }`}
             title={showLineNumbers ? '行番号を隠す' : '行番号を表示'}
           >
-            <Hash className="w-3.5 h-3.5" />
+            <Hash className="w-3.5 h-3.5 shrink-0" />
           </button>
 
           {/* Typography Controls */}
           <div
-            className={`flex items-center border rounded-lg p-0.5 text-xs ${
+            className={`flex items-center border rounded-lg p-0.5 text-xs shrink-0 whitespace-nowrap ${
               isSepia ? 'bg-amber-50/70 border-amber-200' : 'bg-[#252321] border-[#383531]'
             }`}
           >
             <button
               onClick={() => setFontFamily(fontFamily === 'serif' ? 'sans' : 'serif')}
-              className="px-2 py-0.5 rounded hover:opacity-80 transition-opacity flex items-center gap-1"
+              className="px-2 py-0.5 rounded hover:opacity-80 transition-opacity flex items-center gap-1 whitespace-nowrap"
               title="書体切り替え"
             >
-              <Type className="w-3 h-3" />
+              <Type className="w-3 h-3 shrink-0" />
               <span className="text-[10px] font-medium">{fontFamily === 'serif' ? '明朝' : 'ゴシック'}</span>
             </button>
-            <span className="w-px h-3 bg-neutral-500/20 mx-1" />
+            <span className="w-px h-3 bg-neutral-500/20 mx-0.5" />
             <button
               onClick={() => setFontSize(Math.max(13, fontSize - 1))}
-              className="px-1.5 py-0.5 rounded hover:opacity-80"
+              className="px-1.5 py-0.5 rounded hover:opacity-80 font-mono"
               title="文字を小さく"
             >
               -
@@ -488,40 +491,26 @@ export function Editor({ onOpenSettings }: EditorProps) {
             <span className="text-[11px] font-mono px-1 opacity-75">{fontSize}</span>
             <button
               onClick={() => setFontSize(Math.min(26, fontSize + 1))}
-              className="px-1.5 py-0.5 rounded hover:opacity-80"
+              className="px-1.5 py-0.5 rounded hover:opacity-80 font-mono"
               title="文字を大きく"
             >
               +
             </button>
           </div>
 
-          {/* Zen Focus Mode */}
+          {/* Zen Focus Mode Button */}
           <button
             onClick={() => setIsZenFocus(!isZenFocus)}
-            className={`p-1.5 rounded-lg border transition-colors ${
+            className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
               isZenFocus
                 ? 'bg-amber-600 text-white border-amber-600'
                 : isSepia
                 ? 'bg-amber-50 border-amber-200 text-neutral-700 hover:bg-amber-100'
                 : 'bg-[#252321] border-[#383531] text-neutral-300 hover:bg-[#2f2c29]'
             }`}
-            title={isZenFocus ? '禅フォーカス解除' : '禅フォーカス（タイピング時自動全没入）'}
+            title={isZenFocus ? '執筆没入モードを解除 (Esc / Cmd+B)' : '執筆没入モード（Esc / Cmd+B）'}
           >
-            {isZenFocus ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* Save Button */}
-          <button
-            onClick={save}
-            disabled={!isDirty}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-              isDirty
-                ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-sm'
-                : 'opacity-40 cursor-default'
-            }`}
-          >
-            <Save className="w-3.5 h-3.5" />
-            保存
+            {isZenFocus ? <Minimize2 className="w-3.5 h-3.5 shrink-0" /> : <Maximize2 className="w-3.5 h-3.5 shrink-0" />}
           </button>
         </div>
       </div>

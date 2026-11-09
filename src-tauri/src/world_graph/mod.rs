@@ -21,7 +21,7 @@ pub enum WorldGraphError {
     EdgeNotFound(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct WorldNode {
     pub id: String,
     pub node_type: String, // "character" | "term" | "plot" | "location"
@@ -38,9 +38,20 @@ pub struct WorldNode {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    // Phase 11 extensions
+    #[serde(default)]
+    pub image_data: Option<String>,
+    #[serde(default)]
+    pub long_note: String,
+    #[serde(default)]
+    pub phase_id: Option<String>,
+    #[serde(default)]
+    pub pos_x: Option<f64>,
+    #[serde(default)]
+    pub pos_y: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct WorldEdge {
     pub id: String,
     pub source_id: String,
@@ -48,6 +59,11 @@ pub struct WorldEdge {
     pub relation_type: String, // "師弟", "敵対", "秘密を握る", "伏線回収", "登場" etc.
     #[serde(default)]
     pub description: String,
+    // Phase 11 extensions
+    #[serde(default)]
+    pub phase_id: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -191,6 +207,10 @@ impl KuzuGraphEngine {
             full_text: "## 下人\n- 一人称: おれ\n- 二人称: おのれ、お前\n- 口調: 荒削りで焦燥感がある\n- 状況: 数日前に主人から暇を出された\n- 関係: 老婆 (対峙・追剥ぎ)\n\n行き場を失い飢え死にか盗人になるかの選択に苦悩する元使用人。羅生門で雨宿りをしていたが、死人の髪を抜く老婆と出会い、生きるための悪に目覚める。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
+            long_note: "行き場を失い飢え死にか盗人になるかの選択に苦悩する元使用人。\n羅生門で雨宿りをしていたが、死人の髪を抜く老婆と出逢い、生きるための悪に目覚める。".to_string(),
+            pos_x: Some(250.0),
+            pos_y: Some(180.0),
+            ..Default::default()
         };
 
         let mut rousen_attrs = HashMap::new();
@@ -209,6 +229,10 @@ impl KuzuGraphEngine {
             full_text: "## 老婆\n- 一人称: わし\n- 二人称: お前さん\n- 口調: 嗄れ声で弁明がましい\n- 動機: 死人の髪を抜いて鬘にして生き延びる\n\n羅生門の楼上で死骸の髪を抜き、生きるための悪行を正当化する老婆。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
+            long_note: "羅生門の楼上で死骸の髪を抜き、鬘にして生き延びる老婆。\n生きるための悪行を滔々と弁明し、下人の葛藤を一変させる。".to_string(),
+            pos_x: Some(550.0),
+            pos_y: Some(180.0),
+            ..Default::default()
         };
 
         let mut gate_attrs = HashMap::new();
@@ -225,6 +249,10 @@ impl KuzuGraphEngine {
             full_text: "## 羅生門\n- 状態: 荒廃、死体捨て場と化している\n- 天気: 降りしきる夕方の雨\n\n平安京の正門。荒廃し、狐狸や盗人が住みつき死骸が打ち捨てられている場所。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
+            long_note: "平安京の正門。荒廃し、狐狸や盗人が住みつき死骸が打ち捨てられている場所。\n夕方の驟雨が降りしきる。".to_string(),
+            pos_x: Some(400.0),
+            pos_y: Some(380.0),
+            ..Default::default()
         };
 
         let mut plot_attrs = HashMap::new();
@@ -241,6 +269,10 @@ impl KuzuGraphEngine {
             full_text: "## 悪への転向\n- テーマ: 生存のための悪の肯定\n- 結末: 下人が老婆の着物を剥ぎ取り闇へと消える\n\n老婆の弁明（生きるための悪）を聞き、下人が善悪の迷いを捨てて追剥ぎになる転換点。".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),
+            long_note: "老婆の弁明を聞いた下人が、自らの生存のために老婆の着物を強奪して夜の闇へ消えるクライマックス。".to_string(),
+            pos_x: Some(400.0),
+            pos_y: Some(100.0),
+            ..Default::default()
         };
 
         let edge1 = WorldEdge {
@@ -249,6 +281,7 @@ impl KuzuGraphEngine {
             target_id: roba.id.clone(),
             relation_type: "対峙・追剥ぎ".to_string(),
             description: "楼上で出遭い、老婆の論理を利用して着物を奪う関係。".to_string(),
+            ..Default::default()
         };
 
         let edge2 = WorldEdge {
@@ -257,6 +290,7 @@ impl KuzuGraphEngine {
             target_id: gate.id.clone(),
             relation_type: "滞在".to_string(),
             description: "雨宿りをしていたが、楼上の光に誘われて登る。".to_string(),
+            ..Default::default()
         };
 
         let edge3 = WorldEdge {
@@ -265,6 +299,8 @@ impl KuzuGraphEngine {
             target_id: plot.id.clone(),
             relation_type: "契機".to_string(),
             description: "老婆の言葉が下人のモラル崩壊を引き起こす。".to_string(),
+            color: Some("#f43f5e".to_string()),
+            ..Default::default()
         };
 
         GraphData {
@@ -474,6 +510,7 @@ impl KuzuGraphEngine {
                         full_text,
                         created_at: String::new(),
                         updated_at: String::new(),
+                        ..Default::default()
                     });
                 }
             };
@@ -568,6 +605,7 @@ impl KuzuGraphEngine {
                             target_id: t_id,
                             relation_type: rel.relation_type,
                             description: rel.description,
+                            ..Default::default()
                         });
                     }
                 }
@@ -696,6 +734,7 @@ impl KuzuGraphEngine {
                     full_text: n.full_text,
                     created_at: now.clone(),
                     updated_at: now.clone(),
+                    ..Default::default()
                 });
             }
         }
@@ -715,6 +754,7 @@ impl KuzuGraphEngine {
                             target_id,
                             relation_type: e.relation_type,
                             description: e.description,
+                            ..Default::default()
                         });
                     }
                 }
@@ -947,6 +987,15 @@ impl KuzuGraphEngine {
                     out.push_str(&format!("    - {}: {}\n", k, v));
                 }
             }
+            if !node.long_note.trim().is_empty() {
+                out.push_str("  - 詳細長文設定ノート:\n");
+                for line in node.long_note.lines().take(8) {
+                    let trim = line.trim();
+                    if !trim.is_empty() {
+                        out.push_str(&format!("    {}\n", trim));
+                    }
+                }
+            }
         }
 
         if !relevant_edges.is_empty() {
@@ -1082,6 +1131,7 @@ impl KuzuGraphEngine {
                     full_text: format!("## {}\n- 種別: term\n- 別名: {}\n\n原稿より自動抽出された世界観用語。", parent, reading),
                     created_at: now.clone(),
                     updated_at: now.clone(),
+                    ..Default::default()
                 });
             }
         }
@@ -1114,6 +1164,7 @@ impl KuzuGraphEngine {
                         full_text: format!("## {}\n- 種別: character\n\n原稿より自動検出された登場人物。", speaker),
                         created_at: now.clone(),
                         updated_at: now.clone(),
+                        ..Default::default()
                     });
                 }
             }
@@ -1215,6 +1266,7 @@ impl KuzuGraphEngine {
                                 full_text: n.full_text,
                                 created_at: now.clone(),
                                 updated_at: now.clone(),
+                                ..Default::default()
                             });
                         }
                     }
@@ -1225,6 +1277,7 @@ impl KuzuGraphEngine {
                             target_id: e.target_name,
                             relation_type: e.relation_type,
                             description: e.description,
+                            ..Default::default()
                         });
                     }
                 }
@@ -1294,6 +1347,7 @@ impl KuzuGraphEngine {
                             target_id: t,
                             relation_type: edge.relation_type,
                             description: edge.description,
+                            ..Default::default()
                         };
                         updated_graph.edges.push(new_edge.clone());
                         actual_added_edges.push(new_edge);
@@ -1352,6 +1406,7 @@ mod tests {
             full_text: "雨宿りに駆け込んできた高貴な女性。".to_string(),
             created_at: "".to_string(),
             updated_at: "".to_string(),
+            ..Default::default()
         };
         let created_node = engine.upsert_node(new_node.clone()).unwrap();
         assert!(!created_node.id.is_empty());
@@ -1367,6 +1422,7 @@ mod tests {
             target_id: "node-gate-03".to_string(),
             relation_type: "遭遇".to_string(),
             description: "門の下で下人とすれ違う".to_string(),
+            ..Default::default()
         };
         let created_edge = engine.upsert_edge(new_edge).unwrap();
         assert!(!created_edge.id.is_empty());

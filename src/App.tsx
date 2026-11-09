@@ -5,7 +5,16 @@ import { Inspector } from './components/inspector/Inspector';
 import { SettingsModal } from './components/settings/Settings';
 import { WorldStudioModal } from './components/world/WorldStudioModal';
 import { ExportModal } from './components/export/ExportModal';
-import { Settings as SettingsIcon, Share2, BookOpen, FileDown } from 'lucide-react';
+import {
+  Settings as SettingsIcon,
+  Share2,
+  BookOpen,
+  FileDown,
+  Save,
+  Check,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
 import { useVaultStore, useEditorStore, useExportStore } from './store';
 
 export default function App() {
@@ -16,7 +25,15 @@ export default function App() {
   const [hoverRight, setHoverRight] = useState(false);
 
   const { vaultPath, activeFilePath } = useVaultStore();
-  const { theme, isZenFocus, isTyping, isInspectorPinned } = useEditorStore();
+  const {
+    theme,
+    isZenFocus,
+    isTyping,
+    isInspectorPinned,
+    isDirty,
+    save,
+    setIsZenFocus,
+  } = useEditorStore();
   const { isOpen: isExportOpen, openExportModal, closeExportModal } = useExportStore();
 
   const isSepia = theme === 'cream-sepia';
@@ -68,23 +85,68 @@ export default function App() {
         }`}
       >
         {/* Work & Episode Breadcrumb */}
-        <div className="flex items-center space-x-2.5 text-xs">
-          <BookOpen className="w-3.5 h-3.5 text-amber-600/80 dark:text-amber-400/80" />
-          <span className="font-semibold opacity-75 truncate max-w-sm">
+        <div className="flex items-center space-x-2.5 text-xs overflow-hidden">
+          <BookOpen className="w-3.5 h-3.5 shrink-0 text-amber-600/80 dark:text-amber-400/80" />
+          <span className="font-semibold opacity-75 truncate max-w-[180px]">
             {vaultPath ? vaultPath.split('/').pop() : '本棚未選択'}
           </span>
           {activeFilePath && (
             <>
-              <span className="opacity-30">/</span>
-              <span className="font-medium text-amber-700 dark:text-amber-300 truncate max-w-xs">
+              <span className="opacity-30 shrink-0">/</span>
+              <span className="font-medium text-amber-700 dark:text-amber-300 truncate max-w-[200px]">
                 {activeFilePath.split('/').pop()?.replace(/\.md$|\.txt$/, '')}
               </span>
             </>
           )}
         </div>
 
-        {/* Action Controls */}
+        {/* Center: Save State & Save Action (Relocated to top header for clean editor toolbar) */}
         <div className="flex items-center space-x-2">
+          {activeFilePath && (
+            <>
+              {isDirty ? (
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center text-[11px] text-amber-600 dark:text-amber-400 font-medium px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 whitespace-nowrap">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse" />
+                    編集中 (Cmd+S)
+                  </span>
+                  <button
+                    onClick={() => save()}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-all whitespace-nowrap"
+                    title="原稿を保存 (Cmd+S)"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>保存</span>
+                  </button>
+                </div>
+              ) : (
+                <span className="flex items-center text-[11px] text-emerald-600 dark:text-emerald-400 opacity-80 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 whitespace-nowrap">
+                  <Check className="w-3 h-3 mr-1 text-emerald-500" />
+                  保存済み
+                </span>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Action Controls */}
+        <div className="flex items-center space-x-2 shrink-0">
+          {/* Zen Focus Toggle Button */}
+          <button
+            onClick={() => setIsZenFocus(!isZenFocus)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-all whitespace-nowrap ${
+              isZenFocus
+                ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                : isSepia
+                ? 'bg-white hover:bg-amber-50 border-amber-200 text-neutral-700 shadow-2xs'
+                : 'bg-[#22211f] hover:bg-[#2c2a27] border-[#383531] text-neutral-300'
+            }`}
+            title={isZenFocus ? '執筆没入モードを解除 (Esc / Cmd+B)' : '執筆没入モード（サイドバー隠蔽）'}
+          >
+            {isZenFocus ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            <span>{isZenFocus ? '通常表示' : '執筆没入'}</span>
+          </button>
+
           {/* World Graph Studio Button */}
           <button
             onClick={() => setIsWorldStudioOpen(true)}

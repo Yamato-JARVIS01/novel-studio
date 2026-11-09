@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useVaultStore, useEditorStore, useWorldGraphStore, useAiStore } from '../../store';
 import {
   Compass,
   X,
   Minimize2,
   Maximize2,
-  FileText,
   Save,
   Users,
   Sparkles,
@@ -16,11 +15,78 @@ import {
   Layers,
   ArrowRight,
   GitBranch,
+  GripHorizontal,
+  CheckSquare,
+  Square,
+  Plus,
+  Trash2,
+  ArrowUp,
+  ArrowDown,
+  ListTodo,
+  Edit3,
 } from 'lucide-react';
 
 interface FloatingPlotHudProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+interface PlotTodoItem {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
+// Parse markdown text into todo items
+function parseTodosFromSynopsis(text: string): { todos: PlotTodoItem[]; nonTodoPrefix: string; nonTodoSuffix: string } {
+  if (!text) return { todos: [], nonTodoPrefix: '', nonTodoSuffix: '' };
+  const lines = text.split('\n');
+  const todos: PlotTodoItem[] = [];
+  const prefixLines: string[] = [];
+  const suffixLines: string[] = [];
+
+  let foundTodo = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const match = line.match(/^(\s*[-*]\s*\[([ xX])\])\s*(.*)$/);
+    if (match) {
+      foundTodo = true;
+      todos.push({
+        id: `todo-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        completed: match[2].toLowerCase() === 'x',
+        text: match[3].trim(),
+      });
+    } else {
+      if (!foundTodo) {
+        prefixLines.push(line);
+      } else {
+        suffixLines.push(line);
+      }
+    }
+  }
+
+  return {
+    todos,
+    nonTodoPrefix: prefixLines.join('\n'),
+    nonTodoSuffix: suffixLines.join('\n'),
+  };
+}
+
+// Serialize todos back into markdown synopsis
+function serializeTodosToSynopsis(
+  todos: PlotTodoItem[],
+  prefix: string,
+  suffix: string
+): string {
+  const todoLines = todos.map(
+    (t) => `- [${t.completed ? 'x' : ' '}] ${t.text}`
+  );
+  const parts: string[] = [];
+  if (prefix.trim()) parts.push(prefix.trim());
+  if (todoLines.length > 0) parts.push(todoLines.join('\n'));
+  if (suffix.trim()) parts.push(suffix.trim());
+  return parts.join('\n\n');
 }
 
 export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
@@ -38,10 +104,41 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
   const { generateBeats, expandDraft, isGeneratingBeats, isExpandingDraft } = useAiStore();
 
   const [activeTab, setActiveTab] = useState<'episode' | 'assistant' | 'overall' | 'characters'>('episode');
+  const [synopsisMode, setSynopsisMode] = useState<'todo' | 'text'>('todo');
   const [isMinimized, setIsMinimized] = useState(false);
   const [localPlot, setLocalPlot] = useState(overallPlot);
   const [localSynopsis, setLocalSynopsis] = useState(frontmatter?.synopsis || '');
   const [isSavedNotice, setIsSavedNotice] = useState(false);
+
+  // Todo list state
+  const [todoList, setTodoList] = useState<PlotTodoItem[]>([]);
+  const [nonTodoPrefix, setNonTodoPrefix] = useState('');
+  const [nonTodoSuffix, setNonTodoSuffix] = useState('');
+  const [newTodoInput, setNewTodoInput] = useState('');
+
+  // Dragging state
+  const [position, setPosition] = useState<{ x: number; y: number }>(() => {
+    try {
+      const saved = localStorage.getItem('novel_studio_hud_pos');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          return {
+            x: Math.min(Math.max(10, parsed.x), window.innerWidth - 300),
+            y: Math.min(Math.max(10, parsed.y), window.innerHeight - 150),
+          };
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return {
+      x: Math.max(20, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 450),
+      y: 60,
+    };
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Scene Beats & Draft Expansion state
   const [generatedBeats, setGeneratedBeats] = useState<string | null>(null);
@@ -59,11 +156,135 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
     setLocalPlot(overallPlot);
   }, [overallPlot]);
 
+  // Sync localSynopsis and parse todos when frontmatter changes
   useEffect(() => {
-    setLocalSynopsis(frontmatter?.synopsis || '');
+    const syn = frontmatter?.synopsis || '';
+    setLocalSynopsis(syn);
+    const parsed = parseTodosFromSynopsis(syn);
+    setTodoList(parsed.todos);
+    setNonTodoPrefix(parsed.nonTodoPrefix);
+    setNonTodoSuffix(parsed.nonTodoSuffix);
   }, [frontmatter?.synopsis]);
 
+  // Save updated synopsis helper
+  const commitSynopsisUpdate = useCallback((newText: string) => {
+    setLocalSynopsis(newText);
+    updateFrontmatterField({ synopsis: newText });
+    useEditorStore.getState().save();
+    setIsSavedNotice(true);
+    setTimeout(() => setIsSavedNotice(false), 2000);
+  }, [updateFrontmatterField]);
+
+  // Draggable window logic with 60fps bounding
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Only drag from header handle or empty header space
+    if ((e.target as HTMLElement).closest('button, input, textarea')) return;
+    setIsDragging(true);
+    dragOffset.current = {
+      x: e.clientX - position.x,
+      y: e.clientY - position.y,
+    };
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const hudWidth = isMinimized ? 160 : 420;
+      const hudHeight = isMinimized ? 50 : 500;
+      const maxX = Math.max(10, window.innerWidth - hudWidth - 10);
+      const maxY = Math.max(10, window.innerHeight - hudHeight - 10);
+
+      const nextX = Math.min(Math.max(10, e.clientX - dragOffset.current.x), maxX);
+      const nextY = Math.min(Math.max(10, e.clientY - dragOffset.current.y), maxY);
+
+      setPosition({ x: nextX, y: nextY });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      try {
+        localStorage.setItem('novel_studio_hud_pos', JSON.stringify(position));
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, position, isMinimized]);
+
   if (!isOpen) return null;
+
+  // Todo operations
+  const handleToggleTodo = (id: string) => {
+    const updated = todoList.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t));
+    setTodoList(updated);
+    const newSynopsis = serializeTodosToSynopsis(updated, nonTodoPrefix, nonTodoSuffix);
+    commitSynopsisUpdate(newSynopsis);
+  };
+
+  const handleAddTodo = () => {
+    if (!newTodoInput.trim()) return;
+    const newItem: PlotTodoItem = {
+      id: `todo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      text: newTodoInput.trim(),
+      completed: false,
+    };
+    const updated = [...todoList, newItem];
+    setTodoList(updated);
+    setNewTodoInput('');
+    const newSynopsis = serializeTodosToSynopsis(updated, nonTodoPrefix, nonTodoSuffix);
+    commitSynopsisUpdate(newSynopsis);
+  };
+
+  const handleDeleteTodo = (id: string) => {
+    const updated = todoList.filter((t) => t.id !== id);
+    setTodoList(updated);
+    const newSynopsis = serializeTodosToSynopsis(updated, nonTodoPrefix, nonTodoSuffix);
+    commitSynopsisUpdate(newSynopsis);
+  };
+
+  const handleMoveTodo = (index: number, direction: 'up' | 'down') => {
+    const targetIdx = direction === 'up' ? index - 1 : index + 1;
+    if (targetIdx < 0 || targetIdx >= todoList.length) return;
+    const copy = [...todoList];
+    const temp = copy[index];
+    copy[index] = copy[targetIdx];
+    copy[targetIdx] = temp;
+    setTodoList(copy);
+    const newSynopsis = serializeTodosToSynopsis(copy, nonTodoPrefix, nonTodoSuffix);
+    commitSynopsisUpdate(newSynopsis);
+  };
+
+  const handleConvertTextToTodos = () => {
+    if (!localSynopsis.trim()) return;
+    const lines = localSynopsis
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    const newTodos: PlotTodoItem[] = lines.map((line, idx) => {
+      // Strip leading bullet or number
+      const cleaned = line.replace(/^[-*•\d+.]\s*/, '').replace(/^\[[ xX]\]\s*/, '');
+      return {
+        id: `todo-${Date.now()}-${idx}`,
+        text: cleaned || line,
+        completed: false,
+      };
+    });
+    setTodoList(newTodos);
+    setNonTodoPrefix('');
+    setNonTodoSuffix('');
+    const serialized = serializeTodosToSynopsis(newTodos, '', '');
+    commitSynopsisUpdate(serialized);
+    setSynopsisMode('todo');
+  };
 
   const handleSaveOverall = async () => {
     if (!vaultPath) return;
@@ -72,11 +293,8 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
     setTimeout(() => setIsSavedNotice(false), 2000);
   };
 
-  const handleSaveSynopsis = () => {
-    updateFrontmatterField({ synopsis: localSynopsis });
-    useEditorStore.getState().save();
-    setIsSavedNotice(true);
-    setTimeout(() => setIsSavedNotice(false), 2000);
+  const handleSaveSynopsisText = () => {
+    commitSynopsisUpdate(localSynopsis);
   };
 
   // Phase 9: Sync manuscript entities to notes & World Graph
@@ -94,17 +312,33 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
     }
   };
 
-  // Append generated beats to synopsis
+  // Append generated beats as Todo items or text
   const handleAppendBeatsToSynopsis = () => {
     if (!generatedBeats) return;
-    const newSynopsis = localSynopsis
-      ? `${localSynopsis}\n\n【起承転結ビート構成】\n${generatedBeats}`
-      : `【起承転結ビート構成】\n${generatedBeats}`;
-    setLocalSynopsis(newSynopsis);
-    updateFrontmatterField({ synopsis: newSynopsis });
-    useEditorStore.getState().save();
-    setIsSavedNotice(true);
-    setTimeout(() => setIsSavedNotice(false), 2000);
+    const beatLines = generatedBeats
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('【') && !l.startsWith('#'));
+
+    if (beatLines.length > 0) {
+      const newItems: PlotTodoItem[] = beatLines.map((line, i) => ({
+        id: `beat-${Date.now()}-${i}`,
+        text: line.replace(/^[-*•\d+.]\s*/, '').replace(/^\[[ xX]\]\s*/, ''),
+        completed: false,
+      }));
+      const merged = [...todoList, ...newItems];
+      setTodoList(merged);
+      const newSynopsis = serializeTodosToSynopsis(merged, nonTodoPrefix, nonTodoSuffix);
+      commitSynopsisUpdate(newSynopsis);
+      setActiveTab('episode');
+      setSynopsisMode('todo');
+    } else {
+      const newSynopsis = localSynopsis
+        ? `${localSynopsis}\n\n${generatedBeats}`
+        : generatedBeats;
+      commitSynopsisUpdate(newSynopsis);
+      setActiveTab('episode');
+    }
   };
 
   // Phase 9: Expand scene draft into shadow branch & Inline Diff
@@ -113,41 +347,62 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
     await expandDraft(vaultPath, activeFilePath, overallPlot, localSynopsis, draftInstruction);
   };
 
+  // Todo Completion Metrics
+  const totalTodos = todoList.length;
+  const completedTodos = todoList.filter((t) => t.completed).length;
+  const completionPercent = totalTodos > 0 ? Math.round((completedTodos / totalTodos) * 100) : 0;
+
   // Minimized Floating Pill
   if (isMinimized) {
     return (
-      <div className="absolute top-14 right-6 z-40 animate-in fade-in zoom-in-95 duration-200">
-        <button
-          onClick={() => setIsMinimized(false)}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-full border shadow-xl backdrop-blur-xl transition-all cursor-pointer ${
+      <div
+        style={{ left: `${position.x}px`, top: `${position.y}px` }}
+        className="fixed z-40 animate-in fade-in zoom-in-95 duration-200 select-none"
+      >
+        <div
+          onMouseDown={handleMouseDown}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-full border shadow-xl backdrop-blur-xl transition-all cursor-grab active:cursor-grabbing ${
             isSepia
               ? 'bg-[#fbf9f5]/85 border-amber-900/20 text-amber-950 hover:bg-amber-100/90'
               : 'bg-[#1e1d1a]/85 border-amber-500/30 text-amber-300 hover:bg-[#282723]/95 shadow-amber-950/40'
           }`}
-          title="筋書きHUDを展開"
+          title="掴んでドラッグ移動できます。クリックで展開"
         >
+          <GripHorizontal className="w-3.5 h-3.5 opacity-40" />
           <Compass className="w-4 h-4 animate-spin-slow text-amber-500" />
-          <span className="text-xs font-bold tracking-wide">筋書きHUD</span>
-          <Maximize2 className="w-3 h-3 opacity-60" />
-        </button>
+          <span className="text-xs font-bold tracking-wide">
+            筋書きHUD {totalTodos > 0 && `(${completedTodos}/${totalTodos})`}
+          </span>
+          <button
+            onClick={() => setIsMinimized(false)}
+            className="p-1 hover:opacity-100 opacity-60"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="absolute top-14 right-6 z-40 w-[420px] max-w-[calc(100vw-3rem)] animate-in fade-in slide-in-from-top-3 duration-200">
+    <div
+      style={{ left: `${position.x}px`, top: `${position.y}px` }}
+      className="fixed z-40 w-[420px] max-w-[calc(100vw-2rem)] animate-in fade-in slide-in-from-top-3 duration-200"
+    >
       <div
         className={`rounded-2xl border shadow-2xl backdrop-blur-2xl overflow-hidden flex flex-col transition-all ${
           isSepia
-            ? 'bg-[#fcfbf9]/85 border-amber-900/15 text-neutral-800 shadow-amber-950/10'
-            : 'bg-[#1b1a17]/90 border-amber-500/25 text-neutral-200 shadow-black/70 ring-1 ring-white/5'
+            ? 'bg-[#fcfbf9]/90 border-amber-900/20 text-neutral-800 shadow-amber-950/20'
+            : 'bg-[#1b1a17]/95 border-amber-500/30 text-neutral-200 shadow-black/80 ring-1 ring-white/5'
         }`}
       >
-        {/* HUD Window Header */}
+        {/* HUD Window Header (Drag Handle) */}
         <div
-          className={`px-4 py-2.5 flex items-center justify-between border-b select-none ${
-            isSepia ? 'border-amber-900/10 bg-amber-500/5' : 'border-neutral-800/80 bg-white/5'
+          onMouseDown={handleMouseDown}
+          className={`px-4 py-2.5 flex items-center justify-between border-b select-none cursor-grab active:cursor-grabbing ${
+            isSepia ? 'border-amber-900/10 bg-amber-500/10' : 'border-neutral-800/80 bg-white/5'
           }`}
+          title="ここを掴んで画面内の好きな場所にドラッグできます"
         >
           <div className="flex items-center gap-2">
             <div className="p-1 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400">
@@ -162,7 +417,10 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
                   </span>
                 )}
               </div>
-              <div className="text-[10px] opacity-60">プロット直結執筆支援</div>
+              <div className="text-[10px] opacity-60 flex items-center gap-1">
+                <GripHorizontal className="w-3 h-3 opacity-40 inline" />
+                <span>自由ドラッグ移動対応</span>
+              </div>
             </div>
           </div>
 
@@ -229,7 +487,7 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
                 : 'opacity-70 hover:opacity-100 hover:bg-neutral-500/10'
             }`}
           >
-            <FileText className="w-3 h-3" />
+            <ListTodo className="w-3 h-3" />
             <span>話筋書き</span>
           </button>
 
@@ -277,46 +535,225 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
         </div>
 
         {/* Tab Contents */}
-        <div className="p-3 max-h-[440px] overflow-y-auto space-y-3 text-xs leading-relaxed">
-          {/* Tab 1: Episode Specific Plot */}
+        <div className="p-3 max-h-[460px] overflow-y-auto space-y-3 text-xs leading-relaxed">
+          {/* Tab 1: Episode Specific Plot with Interactive Todo Checklist */}
           {activeTab === 'episode' && (
             <div className="space-y-3">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-bold opacity-70">
-                    本話の狙い・あらすじ（Synopsis）
-                  </label>
-                  <button
-                    onClick={() => setActiveTab('assistant')}
-                    className="text-[10px] text-amber-500 hover:underline flex items-center gap-1"
-                  >
-                    <Wand2 className="w-3 h-3" />
-                    <span>AIでビート展開</span>
-                  </button>
-                </div>
-                <textarea
-                  value={localSynopsis}
-                  onChange={(e) => setLocalSynopsis(e.target.value)}
-                  placeholder="このエピソードで下人が直面する葛藤、転換点、結末など..."
-                  rows={5}
-                  className={`w-full p-2.5 rounded-xl text-xs resize-none outline-none border transition-all ${
-                    isSepia
-                      ? 'bg-white/90 border-amber-900/20 focus:border-amber-600 text-neutral-900'
-                      : 'bg-[#131210]/90 border-neutral-700/80 focus:border-amber-400 text-neutral-100'
-                  }`}
-                />
-              </div>
-
+              {/* Mode switch & Header */}
               <div className="flex items-center justify-between">
-                <span className="text-[10px] opacity-50">フロントマターに即時反映</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-[11px] opacity-80">
+                    本話プロット進行管理
+                  </span>
+                  <div className="flex items-center rounded-lg border border-neutral-500/20 p-0.5 text-[10px]">
+                    <button
+                      onClick={() => setSynopsisMode('todo')}
+                      className={`px-2 py-0.5 rounded flex items-center gap-1 transition-all ${
+                        synopsisMode === 'todo'
+                          ? 'bg-amber-500 text-neutral-950 font-bold'
+                          : 'opacity-60 hover:opacity-100'
+                      }`}
+                    >
+                      <ListTodo className="w-3 h-3" />
+                      <span>Todo</span>
+                    </button>
+                    <button
+                      onClick={() => setSynopsisMode('text')}
+                      className={`px-2 py-0.5 rounded flex items-center gap-1 transition-all ${
+                        synopsisMode === 'text'
+                          ? 'bg-amber-500 text-neutral-950 font-bold'
+                          : 'opacity-60 hover:opacity-100'
+                      }`}
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      <span>テキスト</span>
+                    </button>
+                  </div>
+                </div>
+
                 <button
-                  onClick={handleSaveSynopsis}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-all"
+                  onClick={() => setActiveTab('assistant')}
+                  className="text-[10px] text-amber-500 hover:underline flex items-center gap-1 font-semibold"
                 >
-                  <Save className="w-3 h-3" />
-                  <span>話筋書きを反映</span>
+                  <Wand2 className="w-3 h-3" />
+                  <span>AIビート展開</span>
                 </button>
               </div>
+
+              {/* Progress Bar (Todo Mode) */}
+              {totalTodos > 0 && (
+                <div
+                  className={`p-2.5 rounded-xl border space-y-1.5 ${
+                    isSepia ? 'bg-amber-50/80 border-amber-900/10' : 'bg-neutral-900/80 border-neutral-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                      <CheckSquare className="w-3.5 h-3.5" />
+                      プロット達成率
+                    </span>
+                    <span className="font-bold">
+                      {completedTodos} / {totalTodos} 完了 ({completionPercent}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-neutral-500/20 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-amber-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${completionPercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Todo Interactive List View */}
+              {synopsisMode === 'todo' ? (
+                <div className="space-y-2">
+                  {todoList.length === 0 ? (
+                    <div
+                      className={`p-4 rounded-xl border text-center space-y-2 ${
+                        isSepia ? 'bg-white/60 border-amber-900/10' : 'bg-[#131210]/60 border-neutral-800'
+                      }`}
+                    >
+                      <p className="text-[11px] opacity-70">
+                        プロット項目がまだTodo化されていません。
+                      </p>
+                      {localSynopsis.trim().length > 0 ? (
+                        <button
+                          onClick={handleConvertTextToTodos}
+                          className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-2xs"
+                        >
+                          既存テキストを行ごとにTodo化
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setActiveTab('assistant')}
+                          className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-2xs"
+                        >
+                          AIにシーンビートを自動生成させる
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {todoList.map((todo, idx) => (
+                        <div
+                          key={todo.id}
+                          className={`p-2 rounded-xl border flex items-center justify-between gap-2 group transition-all ${
+                            todo.completed
+                              ? isSepia
+                                ? 'bg-emerald-50/50 border-emerald-900/10 opacity-70'
+                                : 'bg-emerald-950/20 border-emerald-800/30 opacity-60'
+                              : isSepia
+                              ? 'bg-white/90 border-amber-900/15 shadow-2xs'
+                              : 'bg-[#201f1c] border-neutral-700/80 shadow-2xs'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <button
+                              onClick={() => handleToggleTodo(todo.id)}
+                              className="text-amber-500 hover:scale-110 transition-transform shrink-0"
+                            >
+                              {todo.completed ? (
+                                <CheckSquare className="w-4 h-4 text-emerald-500" />
+                              ) : (
+                                <Square className="w-4 h-4 opacity-60" />
+                              )}
+                            </button>
+                            <span
+                              className={`text-xs break-words select-text ${
+                                todo.completed ? 'line-through text-neutral-500' : 'font-medium'
+                              }`}
+                            >
+                              {todo.text}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                            <button
+                              onClick={() => handleMoveTodo(idx, 'up')}
+                              disabled={idx === 0}
+                              className="p-1 rounded hover:bg-neutral-500/20 disabled:opacity-20"
+                              title="上へ"
+                            >
+                              <ArrowUp className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => handleMoveTodo(idx, 'down')}
+                              disabled={idx === todoList.length - 1}
+                              className="p-1 rounded hover:bg-neutral-500/20 disabled:opacity-20"
+                              title="下へ"
+                            >
+                              <ArrowDown className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTodo(todo.id)}
+                              className="p-1 rounded hover:bg-rose-500/20 text-rose-500"
+                              title="削除"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add New Todo Form */}
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={newTodoInput}
+                      onChange={(e) => setNewTodoInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddTodo()}
+                      placeholder="新しいプロット項目を追加... (Enter)"
+                      className={`flex-1 p-2 rounded-xl text-xs outline-none border transition-all ${
+                        isSepia
+                          ? 'bg-white/90 border-amber-900/20 focus:border-amber-600 text-neutral-900'
+                          : 'bg-[#131210]/90 border-neutral-700/80 focus:border-amber-400 text-neutral-100'
+                      }`}
+                    />
+                    <button
+                      onClick={handleAddTodo}
+                      disabled={!newTodoInput.trim()}
+                      className="px-3 py-2 rounded-xl text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-40 transition-all flex items-center gap-1 shrink-0 shadow-2xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>追加</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Raw Text Mode */
+                <div className="space-y-2">
+                  <textarea
+                    value={localSynopsis}
+                    onChange={(e) => setLocalSynopsis(e.target.value)}
+                    placeholder="このエピソードで下人が直面する葛藤、転換点、結末など... (- [ ] でTodo化可能)"
+                    rows={6}
+                    className={`w-full p-2.5 rounded-xl text-xs resize-none outline-none border transition-all ${
+                      isSepia
+                        ? 'bg-white/90 border-amber-900/20 focus:border-amber-600 text-neutral-900'
+                        : 'bg-[#131210]/90 border-neutral-700/80 focus:border-amber-400 text-neutral-100'
+                    }`}
+                  />
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={handleConvertTextToTodos}
+                      className="text-[10px] text-amber-500 hover:underline flex items-center gap-1"
+                    >
+                      <ListTodo className="w-3 h-3" />
+                      <span>チェックリスト形式に変換</span>
+                    </button>
+                    <button
+                      onClick={handleSaveSynopsisText}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-all"
+                    >
+                      <Save className="w-3 h-3" />
+                      <span>テキストを保存</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Frontmatter quick facts */}
               <div
@@ -387,7 +824,7 @@ export function FloatingPlotHud({ isOpen, onClose }: FloatingPlotHudProps) {
                         className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-2xs"
                       >
                         <Check className="w-3 h-3" />
-                        <span>話筋書きに挿入反映</span>
+                        <span>Todoプロットに追加反映</span>
                       </button>
                     </div>
                   </div>

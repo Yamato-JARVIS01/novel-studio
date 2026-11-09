@@ -15,6 +15,9 @@ import {
   AlertTriangle,
   ArrowRight,
   Pin,
+  FileText,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 export function Inspector() {
@@ -33,7 +36,12 @@ export function Inspector() {
   const { sceneAnalysis, graphData } = useWorldGraphStore();
 
   const [activeTab, setActiveTab] = useState<'metrics' | 'world' | 'scene' | 'hints'>('world');
+  const [expandedNoteIds, setExpandedNoteIds] = useState<Record<string, boolean>>({});
   const isSepia = theme === 'cream-sepia';
+
+  const toggleNoteExpand = (nodeId: string) => {
+    setExpandedNoteIds((prev) => ({ ...prev, [nodeId]: !prev[nodeId] }));
+  };
 
   const progressPercent = Math.min(
     100,
@@ -54,13 +62,13 @@ export function Inspector() {
     >
       {/* Tab Switcher */}
       <div
-        className={`flex border-b text-[11px] ${
+        className={`flex border-b text-[11px] overflow-x-auto no-scrollbar ${
           isSepia ? 'border-amber-900/10 bg-amber-50/50' : 'border-[#2c2a27] bg-[#1c1b19]'
         }`}
       >
         <button
           onClick={() => setActiveTab('world')}
-          className={`flex-1 py-2.5 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all relative ${
+          className={`flex-1 min-w-[70px] py-2.5 px-2 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all relative whitespace-nowrap shrink-0 ${
             activeTab === 'world'
               ? isSepia
                 ? 'border-amber-700 text-amber-900 bg-amber-100/50'
@@ -68,10 +76,10 @@ export function Inspector() {
               : 'border-transparent opacity-60 hover:opacity-100'
           }`}
         >
-          <Target className="w-3.5 h-3.5 text-amber-500" />
+          <Target className="w-3.5 h-3.5 text-amber-500 shrink-0" />
           <span>登場設定</span>
           {activeNodes.length > 0 && (
-            <span className="ml-0.5 px-1 rounded-full text-[9px] bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold">
+            <span className="ml-0.5 px-1 rounded-full text-[9px] bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold shrink-0">
               {activeNodes.length}
             </span>
           )}
@@ -79,7 +87,7 @@ export function Inspector() {
 
         <button
           onClick={() => setActiveTab('hints')}
-          className={`flex-1 py-2.5 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all relative ${
+          className={`flex-1 min-w-[70px] py-2.5 px-2 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all relative whitespace-nowrap shrink-0 ${
             activeTab === 'hints'
               ? isSepia
                 ? 'border-amber-700 text-amber-900 bg-amber-100/50'
@@ -87,10 +95,10 @@ export function Inspector() {
               : 'border-transparent opacity-60 hover:opacity-100'
           }`}
         >
-          <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+          <Lightbulb className="w-3.5 h-3.5 text-amber-500 shrink-0" />
           <span>推敲/矛盾</span>
           {(lintIssues.length > 0 || consistencyHints.length > 0) && (
-            <span className="ml-0.5 px-1 rounded-full text-[9px] bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold">
+            <span className="ml-0.5 px-1 rounded-full text-[9px] bg-amber-500/20 text-amber-600 dark:text-amber-400 font-bold shrink-0">
               {lintIssues.length + consistencyHints.length}
             </span>
           )}
@@ -98,7 +106,7 @@ export function Inspector() {
 
         <button
           onClick={() => setActiveTab('metrics')}
-          className={`flex-1 py-2.5 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all ${
+          className={`flex-1 min-w-[55px] py-2.5 px-2 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all whitespace-nowrap shrink-0 ${
             activeTab === 'metrics'
               ? isSepia
                 ? 'border-amber-700 text-amber-900 bg-amber-100/50'
@@ -106,13 +114,13 @@ export function Inspector() {
               : 'border-transparent opacity-60 hover:opacity-100'
           }`}
         >
-          <FileSpreadsheet className="w-3.5 h-3.5" />
+          <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
           <span>統計</span>
         </button>
 
         <button
           onClick={() => setActiveTab('scene')}
-          className={`flex-1 py-2.5 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all ${
+          className={`flex-1 min-w-[55px] py-2.5 px-2 font-semibold flex items-center justify-center gap-1 border-b-2 transition-all whitespace-nowrap shrink-0 ${
             activeTab === 'scene'
               ? isSepia
                 ? 'border-amber-700 text-amber-900 bg-amber-100/50'
@@ -120,21 +128,21 @@ export function Inspector() {
               : 'border-transparent opacity-60 hover:opacity-100'
           }`}
         >
-          <BookOpen className="w-3.5 h-3.5" />
+          <BookOpen className="w-3.5 h-3.5 shrink-0" />
           <span>シーン</span>
         </button>
 
         {/* Pin Button for Zen Focus mode */}
         <button
           onClick={toggleInspectorPin}
-          className={`px-2.5 py-2 flex items-center justify-center border-l transition-all ${
+          className={`px-2.5 py-2 flex items-center justify-center border-l transition-all shrink-0 ${
             isInspectorPinned
               ? 'text-amber-500 bg-amber-500/15'
               : 'opacity-40 hover:opacity-100'
           }`}
           title={isInspectorPinned ? '集中時ピン留め解除' : '集中時も横に常時ピン留め'}
         >
-          <Pin className={`w-3.5 h-3.5 ${isInspectorPinned ? 'rotate-45 fill-amber-500' : ''}`} />
+          <Pin className={`w-3.5 h-3.5 shrink-0 ${isInspectorPinned ? 'rotate-45 fill-amber-500' : ''}`} />
         </button>
       </div>
 
@@ -172,6 +180,8 @@ export function Inspector() {
                       ? '🗺️ 場所'
                       : '🏛️ 用語';
 
+                  const isNoteExpanded = !!expandedNoteIds[node.id];
+
                   return (
                     <div
                       key={node.id}
@@ -179,9 +189,27 @@ export function Inspector() {
                         isSepia ? 'bg-white border-amber-200/80 shadow-2xs' : 'bg-[#201f1d] border-[#33312d] shadow-2xs'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs tracking-wide">{node.name}</span>
-                        <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          {node.image_data ? (
+                            <img
+                              src={node.image_data}
+                              alt={node.name}
+                              className="w-8 h-8 rounded-full object-cover border border-amber-500/30 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-xs flex items-center justify-center shrink-0">
+                              {node.name.slice(0, 1)}
+                            </div>
+                          )}
+                          <div>
+                            <span className="font-bold text-xs tracking-wide block leading-tight">{node.name}</span>
+                            <span className="text-[9px] opacity-60">
+                              {node.node_type === 'character' ? '人物' : node.node_type === 'plot' ? '伏線' : node.node_type === 'location' ? '場所' : '用語'}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium whitespace-nowrap shrink-0">
                           {typeLabel}
                         </span>
                       </div>
@@ -203,6 +231,35 @@ export function Inspector() {
                               <span className="font-bold text-amber-700 dark:text-amber-300">{v}</span>
                             </div>
                           ))}
+                        </div>
+                      )}
+
+                      {/* Individual Long Note for this Card */}
+                      {node.long_note && node.long_note.trim().length > 0 && (
+                        <div className="pt-1">
+                          <button
+                            onClick={() => toggleNoteExpand(node.id)}
+                            className="w-full flex items-center justify-between text-[10px] font-semibold text-amber-600 dark:text-amber-400 py-1 hover:opacity-80 transition-opacity"
+                          >
+                            <span className="flex items-center gap-1">
+                              <FileText className="w-3 h-3" />
+                              詳細設定ノート ({node.long_note.length}字)
+                            </span>
+                            {isNoteExpanded ? (
+                              <ChevronUp className="w-3 h-3" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3" />
+                            )}
+                          </button>
+                          {isNoteExpanded && (
+                            <div
+                              className={`mt-1.5 p-2 rounded-xl border text-[11px] leading-relaxed whitespace-pre-wrap font-sans max-h-48 overflow-y-auto ${
+                                isSepia ? 'bg-amber-50/60 border-amber-200/60 text-neutral-800' : 'bg-[#161614] border-[#2c2a27] text-neutral-300'
+                              }`}
+                            >
+                              {node.long_note}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
