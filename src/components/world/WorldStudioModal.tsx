@@ -19,9 +19,18 @@ import {
   Upload,
   Move,
   Calendar,
+  Layers,
+  Bookmark,
 } from 'lucide-react';
 import { useVaultStore, useWorldGraphStore, useEditorStore } from '../../store';
-import { WorldNode, WorldEdge, WorldNodeType } from '../../lib/tauri-commands';
+import {
+  WorldNode,
+  WorldEdge,
+  WorldNodeType,
+  CardTemplate,
+  loadCardTemplates,
+  saveCardTemplates,
+} from '../../lib/tauri-commands';
 
 interface WorldStudioModalProps {
   isOpen: boolean;
@@ -38,6 +47,44 @@ const PLOT_COLOR_PALETTE = [
   '#3b82f6', // blue
 ];
 
+// Rich predefined template fields per category for rapid worldbuilding
+export const STANDARD_FIELDS_BY_TYPE: Record<
+  WorldNodeType,
+  { key: string; label: string; placeholder: string }[]
+> = {
+  character: [
+    { key: '一人称', label: '一人称', placeholder: '例: 私、おれ、僕、余' },
+    { key: '二人称', label: '二人称', placeholder: '例: あなた、お前、君、貴様' },
+    { key: '口調・語尾', label: '口調・語尾', placeholder: '例: 丁寧な敬語、ぶっきらぼう、〜じゃな' },
+    { key: '年齢・性別・外見', label: '年齢・性別・外見', placeholder: '例: 17歳女性・黒髪ショート・常に懐剣を帯びる' },
+    { key: '所属・身分・役職', label: '所属・身分・役職', placeholder: '例: 帝国騎士団第三部隊長、没落貴族の令息' },
+    { key: '信念・価値観（行動原理）', label: '信念・価値観（行動原理）', placeholder: '例: 弱者を守るためなら悪名を恐れない' },
+    { key: '目的・動機（欲求）', label: '目的・動機（欲求）', placeholder: '例: 滅亡した故郷の復興、父の汚名を晴らすこと' },
+    { key: '能力・特技・弱点', label: '能力・特技・弱点', placeholder: '例: 風魔法の達人、毒耐性。雷と閉所が極端に苦手' },
+    { key: '生い立ち・過去', label: '生い立ち・過去', placeholder: '例: 孤児としてスラムで育ち、先代騎士団長に拾われた' },
+    { key: '裏設定・隠している秘密', label: '裏設定・隠している秘密', placeholder: '例: 実は王家の血を引く私生児、不死の呪い' },
+  ],
+  term: [
+    { key: '分類（魔法/技術/組織/制度/歴史等）', label: '分類（魔法/技術/組織/制度/歴史等）', placeholder: '例: 古代魔法 / 先進技術 / 宗教組織 / 国家法' },
+    { key: '基本定義・仕組み', label: '基本定義・仕組み', placeholder: '例: エーテル粒子を循環させて発動する超常現象' },
+    { key: '制約条件・代償（できないこと）', label: '制約条件・代償（できないこと）', placeholder: '例: 生体には直接発動不可、魂の一部を削る' },
+    { key: '関連勢力・普及度', label: '関連勢力・普及度', placeholder: '例: 魔導院が独占管理、一般市民には都市伝説' },
+    { key: '物語上の役割', label: '物語上の役割', placeholder: '例: クライマックスの封印解除キー、戦争勃発の原因' },
+  ],
+  location: [
+    { key: '地域・気候・時間帯', label: '地域・気候・時間帯', placeholder: '例: 北方連峰の谷間、万年雪と寒風、常に黄昏時' },
+    { key: '支配勢力・治安・雰囲気', label: '支配勢力・治安・雰囲気', placeholder: '例: 盗賊ギルドが実効支配、無法地帯だが義理堅い' },
+    { key: '五感の描写メモ（視覚・音・匂い）', label: '五感の描写メモ（視覚・音・匂い）', placeholder: '例: 煤けた石畳、遠くの鍛冶の槌音、湿った潮の香' },
+    { key: '重要な仕掛け・制限', label: '重要な仕掛け・制限', placeholder: '例: 夜間は結界が作動し脱出不可、魔力封殺エリア' },
+  ],
+  plot: [
+    { key: '重要度・ステータス（未回収/進行中/回収済）', label: '重要度・ステータス', placeholder: '例: ★★★最重要・進行中（第3章で急展開）' },
+    { key: '伏線の種（提示シーン・違和感）', label: '伏線の種（提示シーン・違和感）', placeholder: '例: 第1話で下人が見かけた剥げた円柱の不自然な傷' },
+    { key: '真相・裏のカラクリ', label: '真相・裏のカラクリ', placeholder: '例: 老婆は主人の実母であり、着物の中に遺言状があった' },
+    { key: '回収予定エピソード・条件', label: '回収予定エピソード・条件', placeholder: '例: 第5話の対決時、下人が着物を広げた瞬間に判明' },
+  ],
+};
+
 export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
   const { vaultPath } = useVaultStore();
   const { theme } = useEditorStore();
@@ -52,6 +99,8 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     readNoteContent,
     saveNoteContent,
     syncAllNotes,
+    clearGraph,
+    setSelectedNodeId,
   } = useWorldGraphStore();
 
   const isSepia = theme === 'cream-sepia';
@@ -64,9 +113,21 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
   const [newNoteFileName, setNewNoteFileName] = useState('');
   const [isCreatingNewNote, setIsCreatingNewNote] = useState(false);
 
+  // Card Templates
+  const [cardTemplates, setCardTemplates] = useState<CardTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [isSavingTemplateModal, setIsSavingTemplateModal] = useState<boolean>(false);
+  const [newTemplateName, setNewTemplateName] = useState<string>('');
+  const [newTemplateDesc, setNewTemplateDesc] = useState<string>('');
+
   useEffect(() => {
     if (vaultPath && isOpen) {
       loadNotesList(vaultPath);
+      loadCardTemplates(vaultPath).then((tmpls) => {
+        if (tmpls && tmpls.length > 0) {
+          setCardTemplates(tmpls);
+        }
+      });
     }
   }, [vaultPath, isOpen, loadNotesList]);
 
@@ -95,40 +156,37 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
   const [newEdgePhase, setNewEdgePhase] = useState('');
   const [newEdgeColor, setNewEdgeColor] = useState('#d97706');
 
-  // Form states for node editing/creation
+  // Form states for node editing/creation with rich standard + custom template attributes
   const [formData, setFormData] = useState<{
     id: string;
     node_type: WorldNodeType;
     name: string;
     aliases: string;
     summary: string;
-    first_person: string;
-    second_person: string;
-    tone: string;
     image_data: string;
     long_note: string;
     phase_id: string;
     pos_x?: number;
     pos_y?: number;
-    extra_attrs: { key: string; val: string }[];
+    standard_attrs: Record<string, string>;
+    custom_attrs: { key: string; val: string }[];
   }>({
     id: '',
     node_type: 'character',
     name: '',
     aliases: '',
     summary: '',
-    first_person: '',
-    second_person: '',
-    tone: '',
     image_data: '',
     long_note: '',
     phase_id: '',
-    extra_attrs: [],
+    standard_attrs: {},
+    custom_attrs: [],
   });
 
-  // Local graph positions map for dragging
+  // Local graph positions map for dragging & threshold guard
   const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const isMovedRef = useRef<boolean>(false);
   const dragStartRef = useRef<{ clientX: number; clientY: number; nodeX: number; nodeY: number }>({
     clientX: 0,
     clientY: 0,
@@ -212,66 +270,153 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
   };
 
   const openCreateNode = (type: WorldNodeType = categoryFilter) => {
+    const stdFields = STANDARD_FIELDS_BY_TYPE[type] || [];
+    const stdAttrs: Record<string, string> = {};
+    stdFields.forEach((f) => {
+      stdAttrs[f.key] = '';
+    });
+
     setFormData({
       id: '',
       node_type: type,
       name: '',
       aliases: '',
       summary: '',
-      first_person: '',
-      second_person: '',
-      tone: '',
       image_data: '',
       long_note: '',
       phase_id: activePhase !== 'all' ? activePhase : '',
-      extra_attrs: [],
+      standard_attrs: stdAttrs,
+      custom_attrs: [],
     });
     setEditingNode(null);
     setIsCreatingNode(true);
   };
 
   const openEditNode = (node: WorldNode) => {
-    const extra: { key: string; val: string }[] = [];
-    let fp = '';
-    let sp = '';
-    let tone = '';
+    const type = (node.node_type as WorldNodeType) || 'character';
+    const stdFields = STANDARD_FIELDS_BY_TYPE[type] || [];
+    const stdKeys = new Set(stdFields.map((f) => f.key));
+
+    const stdAttrs: Record<string, string> = {};
+    stdFields.forEach((f) => {
+      stdAttrs[f.key] = '';
+    });
+
+    const customAttrs: { key: string; val: string }[] = [];
 
     Object.entries(node.attributes || {}).forEach(([k, v]) => {
-      if (k === '一人称') fp = v;
-      else if (k === '二人称') sp = v;
-      else if (k === '口調') tone = v;
-      else extra.push({ key: k, val: v });
+      if (k === '口調' && '口調・語尾' in stdAttrs && !stdAttrs['口調・語尾']) {
+        stdAttrs['口調・語尾'] = v;
+      } else if (stdKeys.has(k)) {
+        stdAttrs[k] = v;
+      } else {
+        customAttrs.push({ key: k, val: v });
+      }
     });
 
     setFormData({
       id: node.id,
-      node_type: (node.node_type as WorldNodeType) || 'character',
+      node_type: type,
       name: node.name,
       aliases: (node.aliases || []).join(', '),
       summary: node.summary || '',
-      first_person: fp,
-      second_person: sp,
-      tone: tone,
       image_data: node.image_data || '',
       long_note: node.long_note || '',
       phase_id: node.phase_id || '',
       pos_x: node.pos_x,
       pos_y: node.pos_y,
-      extra_attrs: extra,
+      standard_attrs: stdAttrs,
+      custom_attrs: customAttrs,
     });
     setEditingNode(node);
     setIsCreatingNode(true);
+  };
+
+  const handleNodeTypeChange = (newType: WorldNodeType) => {
+    const stdFields = STANDARD_FIELDS_BY_TYPE[newType] || [];
+    const newStdAttrs: Record<string, string> = {};
+    stdFields.forEach((f) => {
+      newStdAttrs[f.key] = formData.standard_attrs[f.key] || '';
+    });
+    setFormData((prev) => ({
+      ...prev,
+      node_type: newType,
+      standard_attrs: newStdAttrs,
+    }));
+  };
+
+  const handleApplyTemplate = (templateId: string) => {
+    if (!templateId) return;
+    const template = cardTemplates.find((t) => t.id === templateId);
+    if (!template) return;
+
+    // Merge template fields into custom_attrs if not already present
+    setFormData((prev) => {
+      const existingKeys = new Set([
+        ...Object.keys(prev.standard_attrs),
+        ...prev.custom_attrs.map((a) => a.key),
+      ]);
+      const addedAttrs: { key: string; val: string }[] = [];
+      template.fields.forEach((f) => {
+        if (!existingKeys.has(f.key)) {
+          addedAttrs.push({ key: f.key, val: f.default_value || '' });
+        }
+      });
+      return {
+        ...prev,
+        custom_attrs: [...prev.custom_attrs, ...addedAttrs],
+      };
+    });
+    setSelectedTemplateId('');
+  };
+
+  const handleSaveCurrentAsTemplate = async () => {
+    if (!newTemplateName.trim() || !vaultPath) return;
+
+    const fields = [
+      ...Object.entries(formData.standard_attrs)
+        .filter(([k]) => k.trim())
+        .map(([k]) => ({
+          key: k,
+          label: k,
+          placeholder: '',
+          default_value: '',
+        })),
+      ...formData.custom_attrs
+        .filter((a) => a.key.trim())
+        .map((a) => ({
+          key: a.key.trim(),
+          label: a.key.trim(),
+          placeholder: '',
+          default_value: '',
+        })),
+    ];
+
+    const newTemplate: CardTemplate = {
+      id: `tmpl-user-${Date.now()}`,
+      name: newTemplateName.trim(),
+      node_type: formData.node_type,
+      description: newTemplateDesc.trim() || `${formData.name || 'カード'}の構成から作成`,
+      fields,
+      is_builtin: false,
+    };
+
+    const updated = [...cardTemplates, newTemplate];
+    setCardTemplates(updated);
+    await saveCardTemplates(vaultPath, updated);
+    setIsSavingTemplateModal(false);
+    setNewTemplateName('');
+    setNewTemplateDesc('');
   };
 
   const handleSaveNode = async () => {
     if (!vaultPath || !formData.name.trim()) return;
 
     const attributes: Record<string, string> = {};
-    if (formData.first_person.trim()) attributes['一人称'] = formData.first_person.trim();
-    if (formData.second_person.trim()) attributes['二人称'] = formData.second_person.trim();
-    if (formData.tone.trim()) attributes['口調'] = formData.tone.trim();
-
-    formData.extra_attrs.forEach((item) => {
+    Object.entries(formData.standard_attrs).forEach(([k, v]) => {
+      if (v.trim()) attributes[k] = v.trim();
+    });
+    formData.custom_attrs.forEach((item) => {
       if (item.key.trim()) attributes[item.key.trim()] = item.val.trim();
     });
 
@@ -297,6 +442,22 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     };
 
     await upsertNode(vaultPath, node);
+    setIsCreatingNode(false);
+    setEditingNode(null);
+  };
+
+  const handleClearWorldData = async () => {
+    if (!vaultPath) return;
+    if (
+      !window.confirm(
+        '【世界観データの一括クリア】\n\n世界観グラフの全ノード・エッジおよび設定ノートを初期化します。\n羅生門などのサンプルデータや不要な初期データを一掃して白紙から始めたい場合に実行してください。\n\n本当にクリアしますか？'
+      )
+    ) {
+      return;
+    }
+    await clearGraph(vaultPath);
+    setNodePositions({});
+    setSelectedNodeId(null);
     setIsCreatingNode(false);
     setEditingNode(null);
   };
@@ -340,10 +501,11 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     await deleteEdge(vaultPath, edgeId);
   };
 
-  // Node Dragging Handlers in SVG Canvas (120fps Pointer Capture)
+  // Node Dragging Handlers in SVG Canvas (120fps Pointer Capture with 5px Threshold Separation)
   const handleNodePointerDown = (e: React.PointerEvent, nodeId: string) => {
     e.stopPropagation();
     setDraggingNodeId(nodeId);
+    isMovedRef.current = false;
     try {
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
     } catch {
@@ -360,6 +522,14 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
 
   const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!draggingNodeId || !svgRef.current) return;
+    const dist = Math.hypot(
+      e.clientX - dragStartRef.current.clientX,
+      e.clientY - dragStartRef.current.clientY
+    );
+    if (dist >= 5) {
+      isMovedRef.current = true;
+    }
+
     const rect = svgRef.current.getBoundingClientRect();
     const scaleX = 800 / rect.width;
     const scaleY = 510 / rect.height;
@@ -386,15 +556,18 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
     } catch {
       // ignore
     }
-    const finalPos = nodePositions[draggingNodeId];
-    const targetNode = graphData.nodes.find((n) => n.id === draggingNodeId);
-    if (finalPos && targetNode) {
-      const updated: WorldNode = {
-        ...targetNode,
-        pos_x: finalPos.x,
-        pos_y: finalPos.y,
-      };
-      await upsertNode(vaultPath, updated);
+
+    if (isMovedRef.current) {
+      const finalPos = nodePositions[draggingNodeId];
+      const targetNode = graphData.nodes.find((n) => n.id === draggingNodeId);
+      if (finalPos && targetNode) {
+        const updated: WorldNode = {
+          ...targetNode,
+          pos_x: finalPos.x,
+          pos_y: finalPos.y,
+        };
+        await upsertNode(vaultPath, updated);
+      }
     }
     setDraggingNodeId(null);
   };
@@ -447,6 +620,20 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Clean Sample / Reset Button */}
+            <button
+              onClick={handleClearWorldData}
+              title="誤って混入した『羅生門』などのサンプル設定ノード・ノートを一掃し、白紙からクリーンに開始します"
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs ${
+                isSepia
+                  ? 'bg-rose-50/80 border-rose-300 text-rose-700 hover:bg-rose-100 hover:border-rose-400'
+                  : 'bg-rose-950/30 border-rose-800/60 text-rose-300 hover:bg-rose-900/50 hover:border-rose-700'
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+              <span>🧹 サンプルデータをクリア</span>
+            </button>
+
             {/* View Switcher: Cards vs Visual Graph */}
             <div
               className={`flex items-center p-0.5 rounded-xl border text-xs font-medium ${
@@ -994,8 +1181,23 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                         key={node.id}
                         transform={`translate(${pos.x}, ${pos.y})`}
                         onPointerDown={(e) => handleNodePointerDown(e, node.id)}
-                        onClick={() => openEditNode(node)}
-                        className="cursor-grab active:cursor-grabbing group touch-none"
+                        onClick={(e) => {
+                          if (isMovedRef.current) {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            return;
+                          }
+                          openEditNode(node);
+                        }}
+                        onPointerUp={(e) => {
+                          if (isMovedRef.current) {
+                            e.stopPropagation();
+                            e.preventDefault();
+                          }
+                        }}
+                        className={`${
+                          draggingNodeId === node.id ? 'cursor-grabbing' : 'cursor-grab'
+                        } group touch-none`}
                       >
                         {/* Shape: Diamond for Plot/Foreshadowing, Circle for others */}
                         {isPlot ? (
@@ -1275,17 +1477,22 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
         {isCreatingNode && (
           <div className="absolute inset-0 z-20 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
             <div
-              className={`w-full max-w-lg rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 max-h-[88vh] overflow-y-auto ${
+              className={`w-full max-w-2xl rounded-2xl shadow-2xl border p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto ${
                 isSepia ? 'bg-[#fbf9f5] border-amber-900/20 text-[#2a2622]' : 'bg-[#22211f] border-[#383531] text-[#e8e4de]'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-base">
-                  {editingNode ? `設定カードの編集: ${editingNode.name}` : '新規設定カードの作成'}
-                </h3>
+              <div className="flex items-center justify-between border-b pb-3 border-current/10">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-600/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold text-xs">
+                    {formData.node_type === 'character' ? '👤' : formData.node_type === 'plot' ? '📌' : formData.node_type === 'location' ? '🗺️' : '🏛️'}
+                  </div>
+                  <h3 className="font-bold text-base">
+                    {editingNode ? `設定カードの編集: ${editingNode.name}` : '新規設定カードの作成'}
+                  </h3>
+                </div>
                 <button
                   onClick={() => setIsCreatingNode(false)}
-                  className="p-1 rounded-lg opacity-60 hover:opacity-100"
+                  className="p-1.5 rounded-lg opacity-60 hover:opacity-100 hover:bg-current/10 transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1344,15 +1551,15 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                   <label className="text-xs font-semibold opacity-70 mb-1 block">カテゴリ</label>
                   <select
                     value={formData.node_type}
-                    onChange={(e) => setFormData({ ...formData, node_type: e.target.value as WorldNodeType })}
+                    onChange={(e) => handleNodeTypeChange(e.target.value as WorldNodeType)}
                     className={`w-full px-3 py-2 rounded-xl text-xs border ${
                       isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
                     }`}
                   >
-                    <option value="character">👤 登場人物</option>
-                    <option value="term">🏛️ 世界観・用語</option>
-                    <option value="plot">📌 プロット・伏線</option>
-                    <option value="location">🗺️ 場所</option>
+                    <option value="character">👤 登場人物 (character)</option>
+                    <option value="term">🏛️ 世界観・用語 (term)</option>
+                    <option value="location">🗺️ 場所・舞台 (location)</option>
+                    <option value="plot">📌 伏線・プロット (plot)</option>
                   </select>
                 </div>
 
@@ -1362,7 +1569,7 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="例: 下人, 羅生門, 追剥ぎの決断"
+                    placeholder="例: 主人公、聖剣エクスカリバー、帝都アヴァロン"
                     className={`w-full px-3 py-2 rounded-xl text-xs border ${
                       isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
                     }`}
@@ -1380,7 +1587,7 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                     type="text"
                     value={formData.aliases}
                     onChange={(e) => setFormData({ ...formData, aliases: e.target.value })}
-                    placeholder="例: 男, 若者, 主人公"
+                    placeholder="例: 男, 若者, 勇者"
                     className={`w-full px-3 py-2 rounded-xl text-xs border ${
                       isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
                     }`}
@@ -1422,63 +1629,222 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 />
               </div>
 
-              {/* Character Attributes (If Character) */}
-              {formData.node_type === 'character' && (
-                <div
-                  className={`p-3.5 rounded-xl border space-y-2.5 ${
-                    isSepia ? 'bg-amber-50/70 border-amber-200' : 'bg-[#1a1917] border-[#333]'
-                  }`}
-                >
-                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400 block">
-                    🎭 キャラクター口調・一人称設定（AI矛盾検知用）
+              {/* Category-Specific Rich Standard Predefined Attributes */}
+              <div
+                className={`p-4 rounded-xl border space-y-3 ${
+                  isSepia ? 'bg-amber-50/70 border-amber-200' : 'bg-[#1a1917] border-[#333]'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>
+                      {formData.node_type === 'character'
+                        ? '👤 登場人物 定型設定項目（AI矛盾検知・GraphRAG自動注入）'
+                        : formData.node_type === 'term'
+                        ? '🏛️ 世界観・用語 定型設定項目（AI矛盾検知・GraphRAG自動注入）'
+                        : formData.node_type === 'location'
+                        ? '🗺️ 場所・舞台 定型設定項目（AI矛盾検知・GraphRAG自動注入）'
+                        : '📌 伏線・プロット 定型設定項目（AI矛盾検知・GraphRAG自動注入）'}
+                    </span>
                   </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[11px] opacity-70 block mb-0.5">一人称</label>
-                      <input
-                        type="text"
-                        value={formData.first_person}
-                        onChange={(e) => setFormData({ ...formData, first_person: e.target.value })}
-                        placeholder="例: おれ, 私, 僕"
-                        className={`w-full px-2.5 py-1.5 rounded-lg text-xs border ${
-                          isSepia ? 'bg-white border-amber-200' : 'bg-[#22211f] border-[#383531]'
-                        }`}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] opacity-70 block mb-0.5">二人称</label>
-                      <input
-                        type="text"
-                        value={formData.second_person}
-                        onChange={(e) => setFormData({ ...formData, second_person: e.target.value })}
-                        placeholder="例: お前, 貴様, あなた"
-                        className={`w-full px-2.5 py-1.5 rounded-lg text-xs border ${
-                          isSepia ? 'bg-white border-amber-200' : 'bg-[#22211f] border-[#383531]'
-                        }`}
-                      />
-                    </div>
+                  <span className="text-[10px] opacity-60">※空欄でも保存可能</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {(STANDARD_FIELDS_BY_TYPE[formData.node_type] || []).map((field) => {
+                    const isLongField =
+                      field.key.includes('生い立ち') ||
+                      field.key.includes('裏設定') ||
+                      field.key.includes('基本定義') ||
+                      field.key.includes('五感の描写') ||
+                      field.key.includes('真相');
+
+                    return (
+                      <div
+                        key={field.key}
+                        className={isLongField ? 'md:col-span-2' : ''}
+                      >
+                        <label className="text-[11px] font-medium opacity-75 block mb-1">
+                          {field.label}
+                        </label>
+                        {isLongField ? (
+                          <textarea
+                            rows={2}
+                            value={formData.standard_attrs[field.key] || ''}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                standard_attrs: {
+                                  ...formData.standard_attrs,
+                                  [field.key]: e.target.value,
+                                },
+                              })
+                            }
+                            placeholder={field.placeholder}
+                            className={`w-full px-2.5 py-1.5 rounded-lg text-xs border resize-none leading-relaxed ${
+                              isSepia ? 'bg-white border-amber-200' : 'bg-[#22211f] border-[#383531]'
+                            }`}
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={formData.standard_attrs[field.key] || ''}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                standard_attrs: {
+                                  ...formData.standard_attrs,
+                                  [field.key]: e.target.value,
+                                },
+                              })
+                            }
+                            placeholder={field.placeholder}
+                            className={`w-full px-2.5 py-1.5 rounded-lg text-xs border ${
+                              isSepia ? 'bg-white border-amber-200' : 'bg-[#22211f] border-[#383531]'
+                            }`}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Custom Card Templates & Custom Attributes Section */}
+              <div
+                className={`p-3.5 rounded-xl border space-y-3 ${
+                  isSepia ? 'bg-amber-50/40 border-amber-200/60' : 'bg-[#161614] border-[#2c2a27]'
+                }`}
+              >
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-xs font-bold">🧩 テンプレート適用 ＆ 独自フィールド</span>
                   </div>
-                  <div>
-                    <label className="text-[11px] opacity-70 block mb-0.5">口調・トーン</label>
-                    <input
-                      type="text"
-                      value={formData.tone}
-                      onChange={(e) => setFormData({ ...formData, tone: e.target.value })}
-                      placeholder="例: 荒削りで焦燥感がある、冷徹な敬語"
-                      className={`w-full px-2.5 py-1.5 rounded-lg text-xs border ${
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Template selector */}
+                    <select
+                      value={selectedTemplateId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedTemplateId(val);
+                        if (val) handleApplyTemplate(val);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] border font-medium cursor-pointer ${
                         isSepia ? 'bg-white border-amber-200' : 'bg-[#22211f] border-[#383531]'
                       }`}
-                    />
+                    >
+                      <option value="">＋ テンプレートを適用...</option>
+                      {cardTemplates.map((tmpl) => (
+                        <option key={tmpl.id} value={tmpl.id}>
+                          {tmpl.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Add Custom Field */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          custom_attrs: [...prev.custom_attrs, { key: '', val: '' }],
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1 transition-all ${
+                        isSepia
+                          ? 'border-amber-300 bg-white hover:bg-amber-50 text-amber-800'
+                          : 'border-[#444] bg-[#22211f] hover:bg-[#2a2926] text-amber-300'
+                      }`}
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>独自フィールド追加</span>
+                    </button>
+
+                    {/* Save Current as Template */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewTemplateName(`${formData.name || 'マイ'}設定テンプレート`);
+                        setIsSavingTemplateModal(true);
+                      }}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-amber-600 hover:bg-amber-500 text-white flex items-center gap-1 shadow-2xs transition-all"
+                      title="現在の項目構成を自分だけの再利用可能なテンプレートとして保存します"
+                    >
+                      <Bookmark className="w-3 h-3" />
+                      <span>構成をテンプレート保存</span>
+                    </button>
                   </div>
                 </div>
-              )}
+
+                {/* Custom Attributes List */}
+                {formData.custom_attrs.length > 0 ? (
+                  <div className="space-y-2 pt-1">
+                    {formData.custom_attrs.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={item.key}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormData((prev) => {
+                              const updated = [...prev.custom_attrs];
+                              updated[idx] = { ...updated[idx], key: val };
+                              return { ...prev, custom_attrs: updated };
+                            });
+                          }}
+                          placeholder="項目名 (例: 魔力ランク, アリバイ)"
+                          className={`w-1/3 px-2.5 py-1.5 rounded-lg text-xs border font-medium ${
+                            isSepia ? 'bg-white border-amber-200' : 'bg-[#22211f] border-[#383531]'
+                          }`}
+                        />
+                        <input
+                          type="text"
+                          value={item.val}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormData((prev) => {
+                              const updated = [...prev.custom_attrs];
+                              updated[idx] = { ...updated[idx], val: val };
+                              return { ...prev, custom_attrs: updated };
+                            });
+                          }}
+                          placeholder="値 (例: Sランク, 22時まで書斎)"
+                          className={`flex-1 px-2.5 py-1.5 rounded-lg text-xs border ${
+                            isSepia ? 'bg-white border-amber-200' : 'bg-[#22211f] border-[#383531]'
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData((prev) => ({
+                              ...prev,
+                              custom_attrs: prev.custom_attrs.filter((_, i) => i !== idx),
+                            }));
+                          }}
+                          className="p-1.5 rounded-lg opacity-60 hover:opacity-100 hover:text-red-500 transition-colors"
+                          title="項目を削除"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] opacity-50 italic">
+                    ※テンプレートの適用または「独自フィールド追加」で、作風に応じた独自の定型項目をいくつでも追加できます。
+                  </p>
+                )}
+              </div>
 
               {/* Individual Long-form Note per Card */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-semibold opacity-70 flex items-center gap-1">
                     <FileText className="w-3.5 h-3.5 text-amber-500" />
-                    📝 詳細長文設定ノート（文字数無制限・GraphRAG自動反映）
+                    📝 自由追記・エピソードメモ（その他の詳細ノート・GraphRAG自動反映）
                   </label>
                   <span className="text-[10px] opacity-50 font-mono">
                     {formData.long_note.length}文字
@@ -1487,8 +1853,8 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 <textarea
                   value={formData.long_note}
                   onChange={(e) => setFormData({ ...formData, long_note: e.target.value })}
-                  rows={5}
-                  placeholder="この人物の生い立ち、詳細な過去の経緯、心理描写、外見・衣装の特徴、秘密など何千文字でも自由に書き込めます。AI推敲時のGraphRAGコンテキストにも自動注入されます..."
+                  rows={4}
+                  placeholder="定型欄に入り切らない生い立ち、詳細なエピソード、心理描写メモ、衣装のディテールなど何千文字でも自由に追記できます。AI推敲時のGraphRAGコンテキストにも自動注入されます..."
                   className={`w-full p-2.5 rounded-xl text-xs border font-mono resize-none leading-relaxed ${
                     isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
                   }`}
@@ -1511,6 +1877,82 @@ export function WorldStudioModal({ isOpen, onClose }: WorldStudioModalProps) {
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>設定カードを保存</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Save Current Structure as Custom Template */}
+        {isSavingTemplateModal && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in">
+            <div
+              className={`w-full max-w-md rounded-2xl shadow-2xl border p-5 flex flex-col gap-3.5 ${
+                isSepia ? 'bg-[#fbf9f5] border-amber-900/20 text-[#2a2622]' : 'bg-[#22211f] border-[#383531] text-[#e8e4de]'
+              }`}
+            >
+              <div className="flex items-center justify-between border-b pb-2.5 border-current/10">
+                <div className="flex items-center gap-2">
+                  <Bookmark className="w-4 h-4 text-amber-500" />
+                  <h4 className="font-bold text-sm">独自カードテンプレートとして保存</h4>
+                </div>
+                <button
+                  onClick={() => setIsSavingTemplateModal(false)}
+                  className="p-1 rounded-lg opacity-60 hover:opacity-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs opacity-75 leading-relaxed">
+                現在の項目構成をテンプレートとして保存すると、他のカードを作成する際にもワンクリックで同じ項目セットを展開できます。
+              </p>
+
+              <div>
+                <label className="text-[11px] font-semibold opacity-70 block mb-1">
+                  テンプレート名（必須）
+                </label>
+                <input
+                  type="text"
+                  value={newTemplateName}
+                  onChange={(e) => setNewTemplateName(e.target.value)}
+                  placeholder="例: ⚔️ 異能スキル設定、🕵️ 容疑者アリバイ表"
+                  className={`w-full px-3 py-1.5 rounded-xl text-xs border ${
+                    isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                  }`}
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold opacity-70 block mb-1">
+                  テンプレートの説明メモ
+                </label>
+                <input
+                  type="text"
+                  value={newTemplateDesc}
+                  onChange={(e) => setNewTemplateDesc(e.target.value)}
+                  placeholder="例: ファンタジー作品向けの魔法・スキル属性セット"
+                  className={`w-full px-3 py-1.5 rounded-xl text-xs border ${
+                    isSepia ? 'bg-white border-amber-200' : 'bg-[#181816] border-[#383531]'
+                  }`}
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-current/10">
+                <button
+                  onClick={() => setIsSavingTemplateModal(false)}
+                  className={`px-3 py-1.5 rounded-xl text-xs border ${
+                    isSepia ? 'border-amber-200 hover:bg-amber-50' : 'border-[#383531] hover:bg-[#2c2b28]'
+                  }`}
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleSaveCurrentAsTemplate}
+                  className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-xs flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>テンプレートを保存</span>
                 </button>
               </div>
             </div>

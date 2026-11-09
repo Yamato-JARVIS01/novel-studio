@@ -292,6 +292,34 @@ export interface SyncConfig {
   mirror_folder_path?: string;
 }
 
+export interface CardTemplateField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  default_value?: string;
+}
+
+export interface CardTemplate {
+  id: string;
+  name: string;
+  node_type: string;
+  description: string;
+  fields: CardTemplateField[];
+  is_builtin?: boolean;
+}
+
+export async function clearWorldGraph(vaultPath: string): Promise<GraphData> {
+  return await invoke<GraphData>('clear_world_graph', { vaultPath });
+}
+
+export async function loadCardTemplates(vaultPath: string): Promise<CardTemplate[]> {
+  return await invoke<CardTemplate[]>('load_card_templates', { vaultPath });
+}
+
+export async function saveCardTemplates(vaultPath: string, templates: CardTemplate[]): Promise<void> {
+  return await invoke<void>('save_card_templates', { vaultPath, templates });
+}
+
 export async function getWorldGraph(vaultPath: string): Promise<GraphData> {
   return await invoke<GraphData>('get_world_graph', { vaultPath });
 }

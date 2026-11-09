@@ -48,6 +48,7 @@ import {
   readWorldNote,
   saveWorldNote,
   syncNotesToGraph,
+  clearWorldGraph,
   syncManuscriptToWorld,
   aiGenerateSceneBeats,
   aiExpandSceneDraft,
@@ -622,6 +623,7 @@ interface WorldGraphState {
   saveNoteContent: (vaultPath: string, noteName: string, content: string) => Promise<void>;
   syncAllNotes: (vaultPath: string) => Promise<void>;
   syncManuscriptToWorldAction: (vaultPath: string, text: string) => Promise<SyncManuscriptResult | null>;
+  clearGraph: (vaultPath: string) => Promise<void>;
 }
 
 export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
@@ -789,6 +791,25 @@ export const useWorldGraphStore = create<WorldGraphState>((set, get) => ({
       console.error('Failed to sync manuscript to world:', e);
       set({ isSyncingManuscript: false });
       return null;
+    }
+  },
+
+  clearGraph: async (vaultPath: string) => {
+    set({ isLoading: true });
+    try {
+      const emptyGraph = await clearWorldGraph(vaultPath);
+      set({
+        graphData: emptyGraph,
+        selectedNodeId: null,
+        sceneAnalysis: null,
+        overallPlot: '',
+        isLoading: false,
+      });
+      await get().loadNotesList(vaultPath);
+      useSyncStore.getState().loadStatus(vaultPath);
+    } catch (e) {
+      console.error('Failed to clear world graph:', e);
+      set({ isLoading: false });
     }
   },
 }));

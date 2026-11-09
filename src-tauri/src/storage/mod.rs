@@ -165,12 +165,20 @@ impl StorageManager {
         fs::read_to_string(path).map_err(StorageError::Io)
     }
 
-    /// Save novel file content
+    /// Save novel file content with in-place write to preserve inode on Google Drive / iCloud
     pub fn save_file(path: &Path, content: &str) -> Result<(), StorageError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, content)?;
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(path)?;
+        file.write_all(content.as_bytes())?;
+        file.flush()?;
+
         // Auto-sync if parent has a vault
         if let Some(parent) = path.parent() {
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -289,9 +297,9 @@ synopsis: "死骸の満ちる楼上に微かな光を見出した下人は、静
             &["第01話_雨夜の羅生門.md".to_string(), "第02話_楼上の灯火.md".to_string()],
         );
 
-        // Initialize World Graph
+        // Initialize World Graph with explicit sample data
         let graph_engine = crate::world_graph::KuzuGraphEngine::new(&vault_path);
-        let _ = graph_engine.get_graph();
+        let _ = graph_engine.init_sample_graph();
 
         // Initialize git & auto-sync
         let _ = crate::storage::git_manager::GitManager::init_or_open(&vault_path);
@@ -526,9 +534,9 @@ synopsis: "死骸の満ちる楼上に微かな光を見出した下人は、静
         };
         let _ = manifest::ManifestManager::save_manifest(vault_path, &manifest);
 
-        // Initialize World Graph
+        // Initialize World Graph with explicit sample data
         let graph_engine = crate::world_graph::KuzuGraphEngine::new(vault_path);
-        let _ = graph_engine.get_graph();
+        let _ = graph_engine.init_sample_graph();
 
         // Initialize git & auto-sync
         let _ = crate::storage::git_manager::GitManager::init_or_open(vault_path);
@@ -691,5 +699,24 @@ mod tests {
         let trash_res = StorageManager::delete_novel_project(&sample_proj).unwrap();
         assert!(!sample_proj.exists());
         assert!(Path::new(&trash_res).exists());
+    }
+
+    #[test]
+    fn test_create_novel_project_clean_initialization() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().join("私の新作ファンタジー");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // Simulate new project creation World Graph initialization
+        let graph_engine = crate::world_graph::KuzuGraphEngine::new(&project_dir);
+        let graph = graph_engine.get_graph().unwrap();
+
+        // MUST be 0 nodes and 0 edges! No Rashomon data!
+        assert_eq!(graph.nodes.len(), 0, "新規小説プロジェクトの世界観ノードは0件でなければならない");
+        assert_eq!(graph.edges.len(), 0, "新規小説プロジェクトの相関エッジは0件でなければならない");
+
+        let char_note = graph_engine.read_note("characters.md").unwrap();
+        assert!(!char_note.contains("下人"), "新規小説の登場人物ノートに下人が混入してはならない");
+        assert!(!char_note.contains("老婆"), "新規小説の登場人物ノートに老婆が混入してはならない");
     }
 }

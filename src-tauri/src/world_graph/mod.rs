@@ -89,6 +89,27 @@ pub struct SyncManuscriptResult {
     pub graph: GraphData,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardTemplateField {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub placeholder: String,
+    #[serde(default)]
+    pub default_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardTemplate {
+    pub id: String,
+    pub name: String,
+    pub node_type: String, // "character" | "term" | "location" | "plot"
+    pub description: String,
+    pub fields: Vec<CardTemplateField>,
+    #[serde(default)]
+    pub is_builtin: bool,
+}
+
 pub struct KuzuGraphEngine {
     pub vault_path: PathBuf,
     graph_file_path: PathBuf,
@@ -108,22 +129,25 @@ impl KuzuGraphEngine {
         self.vault_path.join(".novelstudio").join("notes")
     }
 
-    /// Ensure directory and file exists, creating sample data if completely empty
-    pub fn ensure_initialized(&self) -> Result<(), WorldGraphError> {
-        let parent = self.graph_file_path.parent().unwrap();
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
+    pub fn templates_file_path(&self) -> PathBuf {
+        self.vault_path.join(".novelstudio").join("card_templates.json")
+    }
 
-        let notes_dir = self.notes_dir();
-        if !notes_dir.exists() {
-            fs::create_dir_all(&notes_dir)?;
-        }
+    /// Check if this project is strictly designated as a sample project
+    pub fn is_sample_vault(&self) -> bool {
+        let folder_name = self.vault_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        folder_name == "NovelStudio_Sample"
+            || folder_name.contains("NovelStudio_Sample")
+            || folder_name.contains("サンプル")
+            || folder_name.contains("Sample")
+            || folder_name.contains("羅生門")
+    }
 
-        // Initialize sample notes if empty
-        let char_note = notes_dir.join("characters.md");
-        if !char_note.exists() {
-            let sample_char = r#"# 登場人物ノート
+    pub fn sample_characters_note() -> &'static str {
+        r#"# 登場人物ノート
 
 ## 下人
 - 種別: character
@@ -146,13 +170,11 @@ impl KuzuGraphEngine {
 - 関係: 下人 (対峙・追剥ぎ)
 
 羅生門の楼上で死骸の髪を抜き、生きるための悪行を正当化する老婆。
-"#;
-            let _ = fs::write(char_note, sample_char);
-        }
+"#
+    }
 
-        let loc_note = notes_dir.join("locations.md");
-        if !loc_note.exists() {
-            let sample_loc = r#"# 世界観・舞台設定ノート
+    pub fn sample_locations_note() -> &'static str {
+        r#"# 世界観・舞台設定ノート
 
 ## 羅生門
 - 種別: location
@@ -161,13 +183,11 @@ impl KuzuGraphEngine {
 - 天気: 降りしきる夕方の雨
 
 平安京の正門。荒廃し、狐狸や盗人が住みつき死骸が打ち捨てられている場所。
-"#;
-            let _ = fs::write(loc_note, sample_loc);
-        }
+"#
+    }
 
-        let plot_note = notes_dir.join("plot.md");
-        if !plot_note.exists() {
-            let sample_plot = r#"# 全体筋書き・プロット構成
+    pub fn sample_plot_note() -> &'static str {
+        r#"# 全体筋書き・プロット構成
 
 ## 悪への転向
 - 種別: plot
@@ -176,14 +196,184 @@ impl KuzuGraphEngine {
 - 関連: [[下人]] (契機), [[老婆]] (契機)
 
 老婆の弁明（生きるための悪）を聞き、下人が善悪の迷いを捨てて追剥ぎになる転換点。
-"#;
-            let _ = fs::write(plot_note, sample_plot);
+"#
+    }
+
+    /// Ensure directory and file exists.
+    /// Strictly only generate Rashomon sample data if vault is designated as sample project.
+    /// Normal projects will receive clean empty graph and clean note templates.
+    pub fn ensure_initialized(&self) -> Result<(), WorldGraphError> {
+        let parent = self.graph_file_path.parent().unwrap();
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let notes_dir = self.notes_dir();
+        if !notes_dir.exists() {
+            fs::create_dir_all(&notes_dir)?;
+        }
+
+        let is_sample = self.is_sample_vault();
+
+        // Initialize notes if empty
+        let char_note = notes_dir.join("characters.md");
+        if !char_note.exists() {
+            let content = if is_sample {
+                Self::sample_characters_note()
+            } else {
+                "# 登場人物ノート\n\n"
+            };
+            let _ = fs::write(char_note, content);
+        }
+
+        let loc_note = notes_dir.join("locations.md");
+        if !loc_note.exists() {
+            let content = if is_sample {
+                Self::sample_locations_note()
+            } else {
+                "# 世界観・舞台設定ノート\n\n"
+            };
+            let _ = fs::write(loc_note, content);
+        }
+
+        let plot_note = notes_dir.join("plot.md");
+        if !plot_note.exists() {
+            let content = if is_sample {
+                Self::sample_plot_note()
+            } else {
+                "# 全体筋書き・プロット構成\n\n"
+            };
+            let _ = fs::write(plot_note, content);
         }
 
         if !self.graph_file_path.exists() {
-            let sample_data = Self::build_sample_graph();
-            self.save_graph_atomic(&sample_data)?;
+            let data = if is_sample {
+                Self::build_sample_graph()
+            } else {
+                GraphData {
+                    nodes: Vec::new(),
+                    edges: Vec::new(),
+                }
+            };
+            self.save_graph_atomic(&data)?;
         }
+        Ok(())
+    }
+
+    /// Explicitly initialize sample graph and notes (for Sample Project creation)
+    pub fn init_sample_graph(&self) -> Result<GraphData, WorldGraphError> {
+        let parent = self.graph_file_path.parent().unwrap();
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let notes_dir = self.notes_dir();
+        if !notes_dir.exists() {
+            fs::create_dir_all(&notes_dir)?;
+        }
+
+        fs::write(notes_dir.join("characters.md"), Self::sample_characters_note())?;
+        fs::write(notes_dir.join("locations.md"), Self::sample_locations_note())?;
+        fs::write(notes_dir.join("plot.md"), Self::sample_plot_note())?;
+
+        let sample_data = Self::build_sample_graph();
+        self.save_graph_atomic(&sample_data)?;
+        Ok(sample_data)
+    }
+
+    /// Clear world graph and reset notes to clean empty state
+    pub fn clear_graph(&self) -> Result<GraphData, WorldGraphError> {
+        let empty_data = GraphData {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+        self.save_graph_atomic(&empty_data)?;
+
+        let notes_dir = self.notes_dir();
+        if !notes_dir.exists() {
+            fs::create_dir_all(&notes_dir)?;
+        }
+        fs::write(notes_dir.join("characters.md"), "# 登場人物ノート\n\n")?;
+        fs::write(notes_dir.join("locations.md"), "# 世界観・舞台設定ノート\n\n")?;
+        fs::write(notes_dir.join("plot.md"), "# 全体筋書き・プロット構成\n\n")?;
+
+        Ok(empty_data)
+    }
+
+    /// Built-in card templates for rich worldbuilding
+    pub fn builtin_card_templates() -> Vec<CardTemplate> {
+        vec![
+            CardTemplate {
+                id: "tmpl-skill-magic".to_string(),
+                name: "⚔️ 異能・魔法スキル設定".to_string(),
+                node_type: "term".to_string(),
+                description: "能力・魔法の系統や発動条件、代償、物語上の切り札を整理".to_string(),
+                is_builtin: true,
+                fields: vec![
+                    CardTemplateField { key: "系統・属性".to_string(), label: "系統・属性".to_string(), placeholder: "例: 火炎系、精神干渉、空間転移".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "発動条件・コスト".to_string(), label: "発動条件・コスト".to_string(), placeholder: "例: 魔力消費、特定の詠唱、血液の対価".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "射程・持続時間".to_string(), label: "射程・持続時間".to_string(), placeholder: "例: 視界内・3分間、接触即時".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "反動・代償・弱点".to_string(), label: "反動・代償・弱点".to_string(), placeholder: "例: 使用後の激痛、特定鉱物に無力".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "物語上の切り札".to_string(), label: "物語上の切り札".to_string(), placeholder: "例: クライマックスで禁忌を解く奥義".to_string(), default_value: "".to_string() },
+                ],
+            },
+            CardTemplate {
+                id: "tmpl-mystery-alibi".to_string(),
+                name: "🕵️ ミステリー事件・アリバイ表".to_string(),
+                node_type: "plot".to_string(),
+                description: "事件の発生時刻、凶器、容疑者のアリバイ、偽装工作を整理".to_string(),
+                is_builtin: true,
+                fields: vec![
+                    CardTemplateField { key: "発生日時・場所".to_string(), label: "発生日時・場所".to_string(), placeholder: "例: 10月14日 22:30 別荘2階図書室".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "被害者・凶器".to_string(), label: "被害者・凶器".to_string(), placeholder: "例: 資産家当主・銀のペーパーナイフ".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "容疑者・アリバイ主張".to_string(), label: "容疑者・アリバイ主張".to_string(), placeholder: "例: 秘書（1階ロビーで電話応対中と証言）".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "偽装工作・盲点".to_string(), label: "偽装工作・盲点".to_string(), placeholder: "例: タイマー付きオーディオによる犯行時刻偽装".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "暴かれる動機".to_string(), label: "暴かれる動機".to_string(), placeholder: "例: 遺産相続ではなく過去の復讐".to_string(), default_value: "".to_string() },
+                ],
+            },
+            CardTemplate {
+                id: "tmpl-faction-nation".to_string(),
+                name: "👑 組織・派閥・国家設定".to_string(),
+                node_type: "term".to_string(),
+                description: "政治体制、理念、軍事力、対立・同盟関係、内部抗争を整理".to_string(),
+                is_builtin: true,
+                fields: vec![
+                    CardTemplateField { key: "統治形態・元首".to_string(), label: "統治形態・元首".to_string(), placeholder: "例: 立憲君主制・若き摂政王".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "理念・国是".to_string(), label: "理念・国是".to_string(), placeholder: "例: 信仰による救済、魔導技術至上主義".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "主力戦力・軍事力".to_string(), label: "主力戦力・軍事力".to_string(), placeholder: "例: 鉄騎兵団、ドラゴン部隊、情報暗殺網".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "敵対勢力・同盟関係".to_string(), label: "敵対勢力・同盟関係".to_string(), placeholder: "例: 北方帝国と冷戦状態、商業同盟と不可侵条約".to_string(), default_value: "".to_string() },
+                    CardTemplateField { key: "内部対立・腐敗".to_string(), label: "内部対立・腐敗".to_string(), placeholder: "例: 貴族院と元老院の主導権争い".to_string(), default_value: "".to_string() },
+                ],
+            },
+        ]
+    }
+
+    pub fn load_card_templates(&self) -> Vec<CardTemplate> {
+        let path = self.templates_file_path();
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(templates) = serde_json::from_str::<Vec<CardTemplate>>(&content) {
+                if !templates.is_empty() {
+                    return templates;
+                }
+            }
+        }
+        Self::builtin_card_templates()
+    }
+
+    pub fn save_card_templates(&self, templates: &[CardTemplate]) -> Result<(), WorldGraphError> {
+        let path = self.templates_file_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(templates)?;
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(&path)?;
+        file.write_all(json.as_bytes())?;
+        file.flush()?;
         Ok(())
     }
 
@@ -765,17 +955,22 @@ impl KuzuGraphEngine {
         Ok(current_graph)
     }
 
-    /// Atomically save graph data (.tmp -> rename)
+    /// In-place safe atomic save to avoid Google Drive file trashing / inode recreation
     pub fn save_graph_atomic(&self, data: &GraphData) -> Result<(), WorldGraphError> {
         let parent = self.graph_file_path.parent().unwrap();
         if !parent.exists() {
             fs::create_dir_all(parent)?;
         }
 
-        let tmp_file = parent.join(format!(".world_graph_{}.tmp", Uuid::new_v4()));
         let json = serde_json::to_string_pretty(data)?;
-        fs::write(&tmp_file, json)?;
-        fs::rename(tmp_file, &self.graph_file_path)?;
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(&self.graph_file_path)?;
+        file.write_all(json.as_bytes())?;
+        file.flush()?;
         Ok(())
     }
 
@@ -1388,7 +1583,9 @@ mod tests {
     #[test]
     fn test_world_graph_crud_and_atomic_save() {
         let dir = tempdir().unwrap();
-        let engine = KuzuGraphEngine::new(dir.path());
+        let sample_dir = dir.path().join("NovelStudio_Sample");
+        let engine = KuzuGraphEngine::new(&sample_dir);
+        let _ = engine.init_sample_graph().unwrap();
 
         // 1. Initial graph loading creates sample data
         let initial_graph = engine.get_graph().unwrap();
@@ -1440,9 +1637,79 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ai_graph_context_matching() {
+    fn test_clean_init_without_sample_pollution() {
+        let dir = tempdir().unwrap();
+        let novel_dir = dir.path().join("MyNewEpicNovel");
+        let engine = KuzuGraphEngine::new(&novel_dir);
+
+        // Initial graph for a normal novel project must be completely empty!
+        let initial_graph = engine.get_graph().unwrap();
+        assert_eq!(initial_graph.nodes.len(), 0, "新規小説プロジェクトにサンプルノードが混入してはならない");
+        assert_eq!(initial_graph.edges.len(), 0, "新規小説プロジェクトにサンプルエッジが混入してはならない");
+
+        // Initial notes must be clean without Rashomon data
+        let char_content = engine.read_note("characters.md").unwrap();
+        assert!(!char_content.contains("下人"), "クリーンノートに下人が混入してはならない");
+        assert!(!char_content.contains("老婆"), "クリーンノートに老婆が混入してはならない");
+    }
+
+    #[test]
+    fn test_clear_graph_resets_everything() {
+        let dir = tempdir().unwrap();
+        let sample_dir = dir.path().join("NovelStudio_Sample");
+        let engine = KuzuGraphEngine::new(&sample_dir);
+        let _ = engine.init_sample_graph().unwrap();
+        assert_eq!(engine.get_graph().unwrap().nodes.len(), 4);
+
+        // Clear graph
+        let cleared = engine.clear_graph().unwrap();
+        assert_eq!(cleared.nodes.len(), 0);
+        assert_eq!(cleared.edges.len(), 0);
+
+        let reloaded = engine.get_graph().unwrap();
+        assert_eq!(reloaded.nodes.len(), 0);
+        assert_eq!(reloaded.edges.len(), 0);
+    }
+
+    #[test]
+    fn test_card_templates_load_and_save() {
         let dir = tempdir().unwrap();
         let engine = KuzuGraphEngine::new(dir.path());
+
+        // Default builtin templates
+        let templates = engine.load_card_templates();
+        assert!(templates.iter().any(|t| t.name.contains("異能・魔法スキル")));
+        assert!(templates.iter().any(|t| t.name.contains("ミステリー事件")));
+        assert!(templates.iter().any(|t| t.name.contains("組織・派閥")));
+
+        // Save custom template
+        let mut custom = templates.clone();
+        custom.push(CardTemplate {
+            id: "tmpl-custom-sf".to_string(),
+            name: "🚀 SF宇宙戦艦設定".to_string(),
+            node_type: "term".to_string(),
+            description: "宇宙船の諸元".to_string(),
+            fields: vec![CardTemplateField {
+                key: "推進機関".to_string(),
+                label: "推進機関".to_string(),
+                placeholder: "ワープドライブ".to_string(),
+                default_value: "".to_string(),
+            }],
+            is_builtin: false,
+        });
+
+        engine.save_card_templates(&custom).unwrap();
+        let reloaded = engine.load_card_templates();
+        assert_eq!(reloaded.len(), custom.len());
+        assert!(reloaded.iter().any(|t| t.name.contains("SF宇宙戦艦")));
+    }
+
+    #[test]
+    fn test_build_ai_graph_context_matching() {
+        let dir = tempdir().unwrap();
+        let sample_dir = dir.path().join("NovelStudio_Sample");
+        let engine = KuzuGraphEngine::new(&sample_dir);
+        let _ = engine.init_sample_graph().unwrap();
 
         let manuscript = "下人は梯子を一段ずつ登り、老婆の姿を窺った。";
         let context = engine.build_ai_graph_context(manuscript).unwrap();
@@ -1457,7 +1724,9 @@ mod tests {
     #[test]
     fn test_analyze_scene_consistency() {
         let dir = tempdir().unwrap();
-        let engine = KuzuGraphEngine::new(dir.path());
+        let sample_dir = dir.path().join("NovelStudio_Sample");
+        let engine = KuzuGraphEngine::new(&sample_dir);
+        let _ = engine.init_sample_graph().unwrap();
 
         let manuscript = "下人は「私には行き場がない」と呟き、老婆の前に立った。";
         let analysis = engine.analyze_scene(manuscript).unwrap();
@@ -1470,8 +1739,9 @@ mod tests {
     #[test]
     fn test_notes_and_sync_to_graph() {
         let dir = tempdir().unwrap();
-        let engine = KuzuGraphEngine::new(dir.path());
-        engine.ensure_initialized().unwrap();
+        let sample_dir = dir.path().join("NovelStudio_Sample");
+        let engine = KuzuGraphEngine::new(&sample_dir);
+        let _ = engine.init_sample_graph().unwrap();
 
         // 1. Initial notes exist
         let notes = engine.list_notes().unwrap();
@@ -1516,8 +1786,9 @@ mod tests {
     #[tokio::test]
     async fn test_sync_manuscript_to_world_heuristic() {
         let dir = tempdir().unwrap();
-        let engine = KuzuGraphEngine::new(dir.path());
-        engine.ensure_initialized().unwrap();
+        let sample_dir = dir.path().join("NovelStudio_Sample");
+        let engine = KuzuGraphEngine::new(&sample_dir);
+        let _ = engine.init_sample_graph().unwrap();
 
         let manuscript = r#"
 雨は依然として止む気配がなかった。

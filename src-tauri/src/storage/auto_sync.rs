@@ -121,7 +121,31 @@ impl AutoSyncEngine {
         Ok(())
     }
 
-    /// Recursively mirror vault files to destination folder (excluding .git and temp files)
+    /// Write file content in-place with truncate to preserve inode / Google Drive File Provider ID
+    pub fn write_in_place(src: &Path, dst: &Path) -> std::io::Result<()> {
+        use std::io::{Read, Write};
+        let mut src_file = fs::File::open(src)?;
+        let mut buffer = Vec::new();
+        src_file.read_to_end(&mut buffer)?;
+
+        let mut dst_file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(dst)?;
+        dst_file.write_all(&buffer)?;
+        dst_file.flush()?;
+        Ok(())
+    }
+
+    /// Public entry for cloud mirror differential sync
+    pub fn sync_to_cloud_mirror(src: &Path, dst: &Path) -> std::io::Result<()> {
+        Self::mirror_directory(src, dst)
+    }
+
+    /// Recursively mirror vault files to destination folder (excluding .git, temp files, .DS_Store, .trash)
+    /// Never remove_dir_all or remove_file on destination.
+    /// Uses In-place truncate writing to prevent Google Drive File Provider from moving files to trash!
     fn mirror_directory(src: &Path, dst: &Path) -> std::io::Result<()> {
         if !dst.exists() {
             fs::create_dir_all(dst)?;
@@ -133,8 +157,13 @@ impl AutoSyncEngine {
             let file_name = entry.file_name();
             let name_str = file_name.to_string_lossy();
 
-            // Skip git repo and temp files
-            if name_str == ".git" || name_str.starts_with(".world_graph_") || name_str.ends_with(".tmp") {
+            // Skip git repo, temp files, system files and trash
+            if name_str == ".git"
+                || name_str == ".DS_Store"
+                || name_str == ".trash"
+                || name_str.starts_with(".world_graph_")
+                || name_str.ends_with(".tmp")
+            {
                 continue;
             }
 
@@ -142,22 +171,32 @@ impl AutoSyncEngine {
             if path.is_dir() {
                 Self::mirror_directory(&path, &target)?;
             } else {
-                // Copy or overwrite if modified
-                let should_copy = if target.exists() {
+                // Determine whether content changed
+                let should_write = if target.exists() {
                     let src_meta = path.metadata()?;
                     let dst_meta = target.metadata()?;
-                    src_meta.len() != dst_meta.len()
-                        || src_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-                            > dst_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                    if src_meta.len() != dst_meta.len() {
+                        true
+                    } else if let (Ok(src_mod), Ok(dst_mod)) = (src_meta.modified(), dst_meta.modified()) {
+                        if src_mod > dst_mod {
+                            fs::read(&path)? != fs::read(&target)?
+                        } else {
+                            false
+                        }
+                    } else {
+                        fs::read(&path)? != fs::read(&target)?
+                    }
                 } else {
                     true
                 };
 
-                if should_copy {
+                if should_write {
                     if let Some(parent) = target.parent() {
-                        fs::create_dir_all(parent)?;
+                        if !parent.exists() {
+                            fs::create_dir_all(parent)?;
+                        }
                     }
-                    fs::copy(&path, &target)?;
+                    Self::write_in_place(&path, &target)?;
                 }
             }
         }
@@ -493,7 +532,50 @@ mod tests {
         // Verify mirrored file exists
         let mirrored_file = mirror_dir.path().join("第01話.md");
         assert!(mirrored_file.exists());
-        let content = fs::read_to_string(mirrored_file).unwrap();
+        let content = fs::read_to_string(&mirrored_file).unwrap();
         assert_eq!(content, "# 第一話\n雨の日の出会い");
+
+        // Now test in-place differential update (simulating Google Drive file provider)
+        fs::write(&test_file, "# 第一話\n雨の日の出会い（加筆修正）").unwrap();
+        let status_updated = AutoSyncEngine::trigger_sync(vault_dir.path(), "第1話を加筆");
+        assert_eq!(status_updated.state, "synced");
+
+        let updated_mirrored_content = fs::read_to_string(&mirrored_file).unwrap();
+        assert_eq!(updated_mirrored_content, "# 第一話\n雨の日の出会い（加筆修正）");
+    }
+
+    #[test]
+    fn test_google_drive_in_place_differential_sync() {
+        let vault_dir = tempdir().unwrap();
+        let mirror_dir = tempdir().unwrap();
+
+        // 1. Create file and mirror
+        let file_a = vault_dir.path().join("plot.md");
+        fs::write(&file_a, "初期プロット").unwrap();
+
+        // Write temp/trash files that should be ignored
+        let tmp_file = vault_dir.path().join("test.tmp");
+        fs::write(&tmp_file, "temp data").unwrap();
+        let ds_store = vault_dir.path().join(".DS_Store");
+        fs::write(&ds_store, "mac ds store").unwrap();
+
+        AutoSyncEngine::sync_to_cloud_mirror(vault_dir.path(), mirror_dir.path()).unwrap();
+
+        let mirrored_plot = mirror_dir.path().join("plot.md");
+        assert!(mirrored_plot.exists());
+        assert_eq!(fs::read_to_string(&mirrored_plot).unwrap(), "初期プロット");
+
+        // Ignored files should not exist in mirror
+        assert!(!mirror_dir.path().join("test.tmp").exists());
+        assert!(!mirror_dir.path().join(".DS_Store").exists());
+
+        // 2. Perform in-place update
+        fs::write(&file_a, "更新されたプロット（伏線追加）").unwrap();
+        AutoSyncEngine::sync_to_cloud_mirror(vault_dir.path(), mirror_dir.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&mirrored_plot).unwrap(),
+            "更新されたプロット（伏線追加）"
+        );
     }
 }

@@ -218,17 +218,17 @@ export function Inspector() {
                         <p className="text-[11px] opacity-75 leading-relaxed">{node.summary}</p>
                       )}
 
-                      {/* Character Attributes: First-person pronoun, Tone, etc. */}
+                      {/* Character & World Attributes */}
                       {node.attributes && Object.keys(node.attributes).length > 0 && (
                         <div
-                          className={`p-2 rounded-xl border text-[10px] space-y-1 ${
+                          className={`p-2.5 rounded-xl border text-[10px] space-y-1.5 ${
                             isSepia ? 'bg-amber-50/70 border-amber-200/60' : 'bg-[#181816] border-[#2c2a27]'
                           }`}
                         >
                           {Object.entries(node.attributes).map(([k, v]) => (
-                            <div key={k} className="flex justify-between items-center">
-                              <span className="opacity-50 font-medium">{k}:</span>
-                              <span className="font-bold text-amber-700 dark:text-amber-300">{v}</span>
+                            <div key={k} className="flex flex-col gap-0.5 border-b border-current/5 pb-1 last:border-0 last:pb-0">
+                              <span className="opacity-55 font-medium text-[9px]">{k}</span>
+                              <span className="font-semibold text-amber-700 dark:text-amber-300 leading-tight break-words">{v}</span>
                             </div>
                           ))}
                         </div>

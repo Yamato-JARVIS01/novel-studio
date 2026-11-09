@@ -12,7 +12,7 @@ use storage::auto_sync::{AutoSyncEngine, CloudStorageDetections, SyncConfig, Syn
 use storage::{FileNode, NovelProjectItem, StorageManager};
 use ai::provider::{AiConfig, AiProvider, DetectedAiServices};
 use ai::pipeline::{AiPipeline, RevisionResult};
-use world_graph::{GraphData, KuzuGraphEngine, SceneGraphAnalysis, SyncManuscriptResult, WorldEdge, WorldNode};
+use world_graph::{CardTemplate, GraphData, KuzuGraphEngine, SceneGraphAnalysis, SyncManuscriptResult, WorldEdge, WorldNode};
 use export::{ExportEngine, ExportOptions, ExportResult};
 
 #[tauri::command]
@@ -230,6 +230,28 @@ fn save_world_note(vault_path: String, note_name: String, content: String) -> Re
 fn get_overall_plot(vault_path: String) -> Result<String, String> {
     let engine = KuzuGraphEngine::new(Path::new(&vault_path));
     engine.get_overall_plot().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn clear_world_graph(vault_path: String) -> Result<GraphData, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    let graph = engine.clear_graph().map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "世界観グラフ・サンプル初期化クリア");
+    Ok(graph)
+}
+
+#[tauri::command]
+fn load_card_templates(vault_path: String) -> Result<Vec<CardTemplate>, String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    Ok(engine.load_card_templates())
+}
+
+#[tauri::command]
+fn save_card_templates(vault_path: String, templates: Vec<CardTemplate>) -> Result<(), String> {
+    let engine = KuzuGraphEngine::new(Path::new(&vault_path));
+    engine.save_card_templates(&templates).map_err(|e| e.to_string())?;
+    AutoSyncEngine::trigger_sync(Path::new(&vault_path), "設定カードテンプレート保存");
+    Ok(())
 }
 
 #[tauri::command]
@@ -460,6 +482,9 @@ pub fn run() {
             save_world_note,
             get_overall_plot,
             save_overall_plot,
+            clear_world_graph,
+            load_card_templates,
+            save_card_templates,
             sync_notes_to_graph,
             extract_graph_with_ai_command,
             sync_manuscript_to_world_command,
