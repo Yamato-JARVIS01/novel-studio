@@ -17,6 +17,16 @@ pub enum ManifestError {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultManifest {
     #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub synopsis: Option<String>,
+    #[serde(default)]
+    pub target_paper: Option<String>, // "400" | "1600" | "short"
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
     pub episode_order: Vec<String>,
 }
 

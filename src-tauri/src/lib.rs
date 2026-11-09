@@ -8,9 +8,9 @@ use std::path::Path;
 use editor_engine::frontmatter::{extract_frontmatter, update_frontmatter, update_status, Frontmatter, SceneStatus};
 use editor_engine::jp_linter::{calculate_metrics, lint_japanese_text, LintConfig, LintIssue, ManuscriptMetrics};
 use storage::git_manager::{CommitHistoryItem, DiffFile, GitManager, GitStatusInfo};
-use storage::auto_sync::{AutoSyncEngine, SyncConfig, SyncStatus};
-use storage::{FileNode, StorageManager};
-use ai::provider::AiConfig;
+use storage::auto_sync::{AutoSyncEngine, CloudStorageDetections, SyncConfig, SyncStatus};
+use storage::{FileNode, NovelProjectItem, StorageManager};
+use ai::provider::{AiConfig, AiProvider, DetectedAiServices};
 use ai::pipeline::{AiPipeline, RevisionResult};
 use world_graph::{GraphData, KuzuGraphEngine, SceneGraphAnalysis, SyncManuscriptResult, WorldEdge, WorldNode};
 use export::{ExportEngine, ExportOptions, ExportResult};
@@ -365,6 +365,62 @@ fn save_exported_file_command(
         .map_err(|e| e.to_string())
 }
 
+// Phase 13 Bookshelf & Cloud/AI One-Click Connection IPC
+#[tauri::command]
+fn get_default_library_path() -> String {
+    StorageManager::get_default_library_path().to_string_lossy().to_string()
+}
+
+#[tauri::command]
+fn list_novel_projects() -> Result<Vec<NovelProjectItem>, String> {
+    StorageManager::list_novel_projects().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_novel_project(
+    title: String,
+    synopsis: Option<String>,
+    target_paper: Option<String>,
+) -> Result<NovelProjectItem, String> {
+    StorageManager::create_novel_project(&title, synopsis.as_deref(), target_paper.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_novel_project(project_path: String) -> Result<String, String> {
+    StorageManager::delete_novel_project(Path::new(&project_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_novel_project(folder_path: String) -> Result<NovelProjectItem, String> {
+    StorageManager::import_novel_project(Path::new(&folder_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_cloud_storage_detections(vault_path: Option<String>) -> CloudStorageDetections {
+    AutoSyncEngine::detect_cloud_storage(vault_path.as_deref().map(Path::new))
+}
+
+#[tauri::command]
+fn connect_cloud_storage(vault_path: String, storage_type: String) -> Result<SyncConfig, String> {
+    AutoSyncEngine::connect_cloud_storage(Path::new(&vault_path), &storage_type).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn connect_github_cli(vault_path: String) -> Result<SyncConfig, String> {
+    AutoSyncEngine::connect_github_cli(Path::new(&vault_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn detect_ai_services_command() -> DetectedAiServices {
+    AiProvider::detect_ai_services().await
+}
+
+#[tauri::command]
+async fn test_ai_connection_command(config: AiConfig) -> Result<String, String> {
+    AiProvider::new().test_connection(&config).await.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -415,6 +471,16 @@ pub fn run() {
             get_sync_config,
             save_sync_config,
             trigger_auto_sync,
+            get_default_library_path,
+            list_novel_projects,
+            create_novel_project,
+            delete_novel_project,
+            import_novel_project,
+            get_cloud_storage_detections,
+            connect_cloud_storage,
+            connect_github_cli,
+            detect_ai_services_command,
+            test_ai_connection_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

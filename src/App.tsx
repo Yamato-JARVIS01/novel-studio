@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { Editor } from './components/editor/Editor';
 import { Inspector } from './components/inspector/Inspector';
 import { SettingsModal } from './components/settings/Settings';
 import { WorldStudioModal } from './components/world/WorldStudioModal';
 import { ExportModal } from './components/export/ExportModal';
+import { BookShelfModal } from './components/sidebar/BookShelfModal';
 import {
   Settings as SettingsIcon,
   Share2,
@@ -14,6 +15,7 @@ import {
   Check,
   Maximize2,
   Minimize2,
+  Library,
 } from 'lucide-react';
 import { useVaultStore, useEditorStore, useExportStore } from './store';
 
@@ -24,7 +26,15 @@ export default function App() {
   const [hoverLeft, setHoverLeft] = useState(false);
   const [hoverRight, setHoverRight] = useState(false);
 
-  const { vaultPath, activeFilePath } = useVaultStore();
+  const {
+    vaultPath,
+    activeFilePath,
+    isBookshelfOpen,
+    setIsBookshelfOpen,
+    loadProjects,
+    setVaultPath,
+  } = useVaultStore();
+
   const {
     theme,
     isZenFocus,
@@ -37,6 +47,15 @@ export default function App() {
   const { isOpen: isExportOpen, openExportModal, closeExportModal } = useExportStore();
 
   const isSepia = theme === 'cream-sepia';
+
+  // Phase 13: Auto-load projects on startup and select the most recent novel if none selected
+  useEffect(() => {
+    loadProjects().then((projs) => {
+      if (!vaultPath && projs.length > 0) {
+        setVaultPath(projs[0].path);
+      }
+    });
+  }, []);
 
   // Zen focus auto-fadeout conditions
   const shouldHideHeader = (isZenFocus || isTyping) && !hoverTop;
@@ -84,12 +103,21 @@ export default function App() {
             : 'bg-[#181816]/90 border-[#2c2a27] backdrop-blur-md'
         }`}
       >
-        {/* Work & Episode Breadcrumb */}
-        <div className="flex items-center space-x-2.5 text-xs overflow-hidden">
-          <BookOpen className="w-3.5 h-3.5 shrink-0 text-amber-600/80 dark:text-amber-400/80" />
-          <span className="font-semibold opacity-75 truncate max-w-[180px]">
-            {vaultPath ? vaultPath.split('/').pop() : '本棚未選択'}
-          </span>
+        {/* Work & Episode Breadcrumb (Clickable to open Bookshelf Manager) */}
+        <div className="flex items-center space-x-2 text-xs overflow-hidden">
+          <button
+            onClick={() => setIsBookshelfOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-amber-500/15 transition-all cursor-pointer group"
+            title="クリックして作品本棚を開く（作品切替・新規作成）"
+          >
+            <BookOpen className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform" />
+            <span className="font-bold opacity-90 truncate max-w-[180px] group-hover:text-amber-600 dark:group-hover:text-amber-400">
+              {vaultPath ? vaultPath.split('/').pop() : '作品本棚を開く'}
+            </span>
+            <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 font-mono">
+              本棚
+            </span>
+          </button>
           {activeFilePath && (
             <>
               <span className="opacity-30 shrink-0">/</span>
@@ -177,6 +205,20 @@ export default function App() {
             <span>原稿出力</span>
           </button>
 
+          {/* Bookshelf Studio Trigger */}
+          <button
+            onClick={() => setIsBookshelfOpen(true)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              isSepia
+                ? 'bg-amber-600/10 hover:bg-amber-600/20 text-amber-900 border-amber-600/30'
+                : 'bg-amber-400/10 hover:bg-amber-400/20 text-amber-300 border-amber-400/30'
+            }`}
+            title="作品本棚を開く（全小説の管理・新規作成・作品切替）"
+          >
+            <Library className="w-3.5 h-3.5" />
+            <span>作品本棚</span>
+          </button>
+
           {/* Settings Trigger */}
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -223,6 +265,9 @@ export default function App() {
           <Inspector />
         </div>
       </main>
+
+      {/* Bookshelf Manager Modal (Phase 13 Core Multi-Project UI) */}
+      <BookShelfModal isOpen={isBookshelfOpen} onClose={() => setIsBookshelfOpen(false)} />
 
       {/* World Graph Studio Modal */}
       <WorldStudioModal isOpen={isWorldStudioOpen} onClose={() => setIsWorldStudioOpen(false)} />

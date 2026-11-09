@@ -30,6 +30,20 @@ pub struct AiConfig {
     pub base_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DetectedAiServices {
+    pub ollama_running: bool,
+    pub ollama_models: Vec<String>,
+    pub lmstudio_running: bool,
+    pub lmstudio_models: Vec<String>,
+    pub has_gemini_env: bool,
+    pub has_openai_env: bool,
+    pub has_claude_env: bool,
+    pub gemini_env_key: Option<String>,
+    pub openai_env_key: Option<String>,
+    pub claude_env_key: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiResponse {
     pub text: String,
@@ -231,5 +245,77 @@ impl AiProvider {
             .ok_or_else(|| AiError::Api("Invalid Claude response structure".to_string()))?;
 
         Ok(text.to_string())
+    }
+
+    /// Automatically detect available local and cloud AI services
+    pub async fn detect_ai_services() -> DetectedAiServices {
+        let client = Client::builder()
+            .timeout(Duration::from_millis(1500))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
+        let mut services = DetectedAiServices::default();
+
+        // 1. Check Ollama on http://127.0.0.1:11434/api/tags
+        if let Ok(resp) = client.get("http://127.0.0.1:11434/api/tags").send().await {
+            if resp.status().is_success() {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(models) = json["models"].as_array() {
+                        let names: Vec<String> = models
+                            .iter()
+                            .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+                            .collect();
+                        services.ollama_running = true;
+                        services.ollama_models = names;
+                    }
+                }
+            }
+        }
+
+        // 2. Check LM Studio on http://127.0.0.1:1234/v1/models
+        if let Ok(resp) = client.get("http://127.0.0.1:1234/v1/models").send().await {
+            if resp.status().is_success() {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(models) = json["data"].as_array() {
+                        let names: Vec<String> = models
+                            .iter()
+                            .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                            .collect();
+                        services.lmstudio_running = true;
+                        services.lmstudio_models = names;
+                    }
+                }
+            }
+        }
+
+        // 3. Check environment variables
+        if let Ok(val) = std::env::var("GEMINI_API_KEY") {
+            if !val.trim().is_empty() {
+                services.has_gemini_env = true;
+                services.gemini_env_key = Some(val);
+            }
+        }
+        if let Ok(val) = std::env::var("OPENAI_API_KEY") {
+            if !val.trim().is_empty() {
+                services.has_openai_env = true;
+                services.openai_env_key = Some(val);
+            }
+        }
+        if let Ok(val) = std::env::var("ANTHROPIC_API_KEY") {
+            if !val.trim().is_empty() {
+                services.has_claude_env = true;
+                services.claude_env_key = Some(val);
+            }
+        }
+
+        services
+    }
+
+    /// Fast test of AI connection
+    pub async fn test_connection(&self, config: &AiConfig) -> Result<String, AiError> {
+        let test_prompt = "こんにちは。これは接続確認テストです。一言返信してください。";
+        let res = self.request_review(config, "テスト", test_prompt).await?;
+        let preview = res.lines().next().unwrap_or("OK").chars().take(80).collect::<String>();
+        Ok(format!("✅ 接続成功！ AIからの応答: 「{}」", preview))
     }
 }

@@ -49,6 +49,18 @@ pub struct SyncStatus {
     pub target_destinations: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudStorageDetections {
+    pub icloud_available: bool,
+    pub icloud_path: Option<String>,
+    pub google_drive_available: bool,
+    pub google_drive_path: Option<String>,
+    pub local_backup_path: String,
+    pub gh_cli_available: bool,
+    pub gh_username: Option<String>,
+    pub active_mirror_type: Option<String>, // "icloud" | "google_drive" | "local" | "custom"
+}
+
 impl Default for SyncStatus {
     fn default() -> Self {
         Self {
@@ -253,6 +265,183 @@ impl AutoSyncEngine {
 
         let _ = Self::save_status(vault_path, &status);
         status
+    }
+
+    /// Detect available cloud storage destinations (iCloud, Google Drive, Local, GitHub CLI)
+    pub fn detect_cloud_storage(vault_path: Option<&Path>) -> CloudStorageDetections {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let home_path = Path::new(&home);
+
+        // 1. iCloud Drive detection
+        let icloud_base = home_path.join("Library/Mobile Documents/com~apple~CloudDocs");
+        let (icloud_available, icloud_path) = if icloud_base.exists() && icloud_base.is_dir() {
+            (true, Some(icloud_base.join("NovelStudio_Backup").to_string_lossy().to_string()))
+        } else {
+            (false, None)
+        };
+
+        // 2. Google Drive detection
+        let cloud_storage_dir = home_path.join("Library/CloudStorage");
+        let mut google_drive_available = false;
+        let mut google_drive_path = None;
+
+        if cloud_storage_dir.exists() && cloud_storage_dir.is_dir() {
+            if let Ok(entries) = fs::read_dir(&cloud_storage_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with("GoogleDrive") || name.starts_with("Google Drive") {
+                        let gd_root = entry.path();
+                        let my_drive_candidates = ["マイドライブ", "マイドライブ", "My Drive"];
+                        let mut target_sub = None;
+                        for cand in &my_drive_candidates {
+                            let sub = gd_root.join(cand);
+                            if sub.exists() {
+                                target_sub = Some(sub);
+                                break;
+                            }
+                        }
+                        let base_target = target_sub.unwrap_or(gd_root);
+                        google_drive_path = Some(base_target.join("NovelStudio_Backup").to_string_lossy().to_string());
+                        google_drive_available = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !google_drive_available {
+            let legacy_gd = home_path.join("Google Drive");
+            if legacy_gd.exists() {
+                google_drive_available = true;
+                google_drive_path = Some(legacy_gd.join("NovelStudio_Backup").to_string_lossy().to_string());
+            }
+        }
+
+        // 3. Local Documents Backup
+        let local_backup_path = home_path.join("Documents/NovelStudio_Backup").to_string_lossy().to_string();
+
+        // 4. GitHub CLI detection
+        let (gh_cli_available, gh_username) = Self::detect_github_cli();
+
+        // 5. Active mirror type
+        let active_mirror_type = if let Some(vp) = vault_path {
+            let cfg = Self::load_config(vp);
+            if let Some(ref m) = cfg.mirror_folder_path {
+                if m.contains("CloudDocs") || m.contains("Mobile Documents") {
+                    Some("icloud".to_string())
+                } else if m.contains("GoogleDrive") || m.contains("Google Drive") {
+                    Some("google_drive".to_string())
+                } else if m.contains("NovelStudio_Backup") && m.contains("Documents") {
+                    Some("local".to_string())
+                } else if !m.trim().is_empty() {
+                    Some("custom".to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        CloudStorageDetections {
+            icloud_available,
+            icloud_path,
+            google_drive_available,
+            google_drive_path,
+            local_backup_path,
+            gh_cli_available,
+            gh_username,
+            active_mirror_type,
+        }
+    }
+
+    /// Check if GitHub CLI is installed and authenticated
+    pub fn detect_github_cli() -> (bool, Option<String>) {
+        let gh_paths = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "gh"];
+        for path in &gh_paths {
+            if let Ok(output) = std::process::Command::new(path)
+                .arg("auth")
+                .arg("status")
+                .output()
+            {
+                if output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let combined = format!("{}\n{}", stdout, stderr);
+                    let username = combined
+                        .lines()
+                        .find(|l| l.contains("account "))
+                        .and_then(|l| l.split("account ").nth(1)?.split_whitespace().next())
+                        .map(|s| s.trim().to_string());
+                    return (true, username);
+                }
+            }
+        }
+        (false, None)
+    }
+
+    /// Retrieve token directly from GitHub CLI
+    pub fn get_github_cli_token() -> Option<String> {
+        let gh_paths = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "gh"];
+        for path in &gh_paths {
+            if let Ok(output) = std::process::Command::new(path)
+                .arg("auth")
+                .arg("token")
+                .output()
+            {
+                if output.status.success() {
+                    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !token.is_empty() {
+                        return Some(token);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// One-click connect cloud storage (iCloud, Google Drive, Local)
+    pub fn connect_cloud_storage(vault_path: &Path, storage_type: &str) -> Result<SyncConfig, AutoSyncError> {
+        let detections = Self::detect_cloud_storage(Some(vault_path));
+        let target_path = match storage_type {
+            "icloud" => detections.icloud_path.ok_or_else(|| {
+                AutoSyncError::Git("iCloud Drive が有効化されていないか、ディレクトリが見つかりません".to_string())
+            })?,
+            "google_drive" => detections.google_drive_path.ok_or_else(|| {
+                AutoSyncError::Git("Google Drive が検出されませんでした。Google ドライブ アプリが起動しているか確認してください".to_string())
+            })?,
+            "local" => detections.local_backup_path,
+            _ => {
+                return Err(AutoSyncError::Git("未対応のストレージ種別です".to_string()));
+            }
+        };
+
+        fs::create_dir_all(Path::new(&target_path))?;
+
+        let mut config = Self::load_config(vault_path);
+        config.auto_sync_enabled = true;
+        config.mirror_folder_path = Some(target_path);
+        Self::save_config(vault_path, &config)?;
+
+        let _ = Self::trigger_sync(vault_path, &format!("{}への自動同期接続", storage_type));
+        Ok(config)
+    }
+
+    /// One-click connect GitHub CLI
+    pub fn connect_github_cli(vault_path: &Path) -> Result<SyncConfig, AutoSyncError> {
+        let token = Self::get_github_cli_token().ok_or_else(|| {
+            AutoSyncError::Git("GitHub CLI のログイン情報が見つかりません。ターミナルで 'gh auth login' を実行してください。".to_string())
+        })?;
+
+        let mut config = Self::load_config(vault_path);
+        config.auto_sync_enabled = true;
+        config.github_pat = Some(token);
+        Self::save_config(vault_path, &config)?;
+
+        let _ = Self::trigger_sync(vault_path, "GitHub CLI アカウント接続完了");
+        Ok(config)
     }
 }
 

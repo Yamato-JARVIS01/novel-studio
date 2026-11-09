@@ -104,6 +104,42 @@ export interface RevisionResult {
   diffs: DiffFile[];
 }
 
+// Phase 13 Bookshelf & Cloud/AI Detections
+export interface NovelProjectItem {
+  path: string;
+  title: string;
+  synopsis: string;
+  target_paper: string; // "400" | "1600" | "short"
+  total_chars: number;
+  episode_count: number;
+  last_modified: string;
+  is_sample: boolean;
+}
+
+export interface CloudStorageDetections {
+  icloud_available: boolean;
+  icloud_path?: string;
+  google_drive_available: boolean;
+  google_drive_path?: string;
+  local_backup_path: string;
+  gh_cli_available: boolean;
+  gh_username?: string;
+  active_mirror_type?: string;
+}
+
+export interface DetectedAiServices {
+  ollama_running: boolean;
+  ollama_models: string[];
+  lmstudio_running: boolean;
+  lmstudio_models: string[];
+  has_gemini_env: boolean;
+  has_openai_env: boolean;
+  has_claude_env: boolean;
+  gemini_env_key?: string;
+  openai_env_key?: string;
+  claude_env_key?: string;
+}
+
 // Commands
 export async function pingBackend(): Promise<string> {
   return await invoke<string>('ping_command');
@@ -429,5 +465,62 @@ export async function saveExportedFile(
     fileName,
     content,
   });
+}
+
+// Phase 13 Bookshelf & Cloud/AI One-Click Connection
+export async function getDefaultLibraryPath(): Promise<string> {
+  return await invoke<string>('get_default_library_path');
+}
+
+export async function listNovelProjects(): Promise<NovelProjectItem[]> {
+  return await invoke<NovelProjectItem[]>('list_novel_projects');
+}
+
+export async function createNovelProject(
+  title: string,
+  synopsis?: string,
+  targetPaper?: string
+): Promise<NovelProjectItem> {
+  return await invoke<NovelProjectItem>('create_novel_project', {
+    title,
+    synopsis,
+    targetPaper,
+  });
+}
+
+export async function deleteNovelProject(projectPath: string): Promise<string> {
+  return await invoke<string>('delete_novel_project', { projectPath });
+}
+
+export async function importNovelProject(folderPath: string): Promise<NovelProjectItem> {
+  return await invoke<NovelProjectItem>('import_novel_project', { folderPath });
+}
+
+export async function getCloudStorageDetections(
+  vaultPath?: string
+): Promise<CloudStorageDetections> {
+  return await invoke<CloudStorageDetections>('get_cloud_storage_detections', { vaultPath });
+}
+
+export async function connectCloudStorage(
+  vaultPath: string,
+  storageType: string
+): Promise<SyncConfig> {
+  return await invoke<SyncConfig>('connect_cloud_storage', {
+    vaultPath,
+    storageType,
+  });
+}
+
+export async function connectGithubCli(vaultPath: string): Promise<SyncConfig> {
+  return await invoke<SyncConfig>('connect_github_cli', { vaultPath });
+}
+
+export async function detectAiServices(): Promise<DetectedAiServices> {
+  return await invoke<DetectedAiServices>('detect_ai_services_command');
+}
+
+export async function testAiConnection(config: AiConfig): Promise<string> {
+  return await invoke<string>('test_ai_connection_command', { config });
 }
 

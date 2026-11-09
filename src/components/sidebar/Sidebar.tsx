@@ -23,6 +23,7 @@ export function Sidebar() {
     activeFilePath,
     isLoading,
     isSnapshotSaved,
+    setIsBookshelfOpen,
     setVaultPath,
     refreshFiles,
     selectFile,
@@ -239,24 +240,39 @@ export function Sidebar() {
           isSepia ? 'border-amber-900/10 bg-amber-50/50' : 'border-[#2c2a27] bg-[#1c1b19]'
         }`}
       >
-        <div className="flex items-center truncate mr-2">
-          <BookMarked className="w-4 h-4 mr-2 text-amber-600 dark:text-amber-400 shrink-0" />
+        <div
+          onClick={() => setIsBookshelfOpen(true)}
+          className="flex items-center truncate mr-2 cursor-pointer group hover:opacity-90 transition-opacity"
+          title="作品本棚を開く（全小説の管理・新規作成・作品切替）"
+        >
+          <BookMarked className="w-4 h-4 mr-2 text-amber-600 dark:text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
           <div className="truncate">
-            <h2 className="text-xs font-bold tracking-wide truncate">
+            <h2 className="text-xs font-bold tracking-wide truncate group-hover:text-amber-600 dark:group-hover:text-amber-400">
               {vaultPath ? vaultPath.split('/').pop() : '作品本棚（未選択）'}
             </h2>
-            <p className="text-[10px] opacity-50 truncate">
-              {vaultPath ? '原稿フォルダ' : '作品を開いて執筆を開始'}
+            <p className="text-[10px] opacity-50 truncate flex items-center gap-1">
+              <span>{vaultPath ? '原稿フォルダ' : '作品を開いて執筆を開始'}</span>
+              <span className="text-amber-600 dark:text-amber-400 font-medium">・本棚を開く ↗</span>
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setIsCustomPathOpen(!isCustomPathOpen)}
-          title="別の原稿フォルダを開く"
-          className="p-1.5 rounded-lg opacity-60 hover:opacity-100 transition-opacity"
-        >
-          <FolderUp className="w-4 h-4" />
-        </button>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsBookshelfOpen(true)}
+            title="作品本棚マネージャーを開く"
+            className="p-1.5 rounded-lg opacity-70 hover:opacity-100 hover:bg-amber-500/15 text-amber-600 dark:text-amber-400 transition-all cursor-pointer"
+          >
+            <BookMarked className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setIsCustomPathOpen(!isCustomPathOpen)}
+            title="カスタムパスでフォルダを開く"
+            className="p-1.5 rounded-lg opacity-50 hover:opacity-100 transition-opacity"
+          >
+            <FolderUp className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Path Input dropdown */}
@@ -354,10 +370,19 @@ export function Sidebar() {
         {isLoading ? (
           <div className="text-xs opacity-50 p-6 text-center">原稿を読み込んでいます...</div>
         ) : files.length === 0 ? (
-          <div className="text-xs opacity-50 p-6 text-center leading-relaxed">
-            {vaultPath
-              ? 'エピソードがまだありません。\n上の「＋」から書き始めましょう。'
-              : '本棚を開くとエピソードがここに並びます。'}
+          <div className="text-xs opacity-60 p-6 text-center leading-relaxed space-y-3">
+            <p>
+              {vaultPath
+                ? 'エピソードがまだありません。\n上の「＋」から書き始めましょう。'
+                : '本棚から作品を選んで執筆を開始します。'}
+            </p>
+            <button
+              onClick={() => setIsBookshelfOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white shadow-xs transition-all cursor-pointer"
+            >
+              <BookMarked className="w-3.5 h-3.5" />
+              <span>📚 作品本棚を開く</span>
+            </button>
           </div>
         ) : (
           renderTree(files)

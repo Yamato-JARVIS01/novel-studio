@@ -56,6 +56,18 @@ import {
   SyncManuscriptResult,
   ExportOptions,
   ExportResult,
+  NovelProjectItem,
+  CloudStorageDetections,
+  DetectedAiServices,
+  listNovelProjects,
+  createNovelProject,
+  deleteNovelProject,
+  importNovelProject,
+  getCloudStorageDetections,
+  connectCloudStorage,
+  connectGithubCli,
+  detectAiServices,
+  testAiConnection,
 } from '../lib/tauri-commands';
 
 interface VaultState {
@@ -65,6 +77,14 @@ interface VaultState {
   gitStatus: GitStatusInfo | null;
   isLoading: boolean;
   isSnapshotSaved: boolean;
+  projects: NovelProjectItem[];
+  isBookshelfOpen: boolean;
+  setIsBookshelfOpen: (open: boolean) => void;
+  loadProjects: () => Promise<NovelProjectItem[]>;
+  createProject: (title: string, synopsis?: string, targetPaper?: string) => Promise<NovelProjectItem | null>;
+  deleteProject: (projectPath: string) => Promise<void>;
+  importProject: (folderPath: string) => Promise<NovelProjectItem | null>;
+  switchProject: (projectPath: string) => Promise<void>;
   setVaultPath: (path: string) => Promise<void>;
   loadSampleProject: () => Promise<void>;
   refreshFiles: () => Promise<void>;
@@ -83,6 +103,73 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   gitStatus: null,
   isLoading: false,
   isSnapshotSaved: false,
+  projects: [],
+  isBookshelfOpen: false,
+
+  setIsBookshelfOpen: (open: boolean) => set({ isBookshelfOpen: open }),
+
+  loadProjects: async () => {
+    try {
+      const projects = await listNovelProjects();
+      set({ projects });
+      return projects;
+    } catch (e) {
+      console.error('Failed to list novel projects:', e);
+      return [];
+    }
+  },
+
+  createProject: async (title: string, synopsis?: string, targetPaper?: string) => {
+    set({ isLoading: true });
+    try {
+      const proj = await createNovelProject(title, synopsis, targetPaper);
+      await get().loadProjects();
+      await get().setVaultPath(proj.path);
+      set({ isBookshelfOpen: false, isLoading: false });
+      return proj;
+    } catch (e) {
+      console.error('Failed to create novel project:', e);
+      set({ isLoading: false });
+      return null;
+    }
+  },
+
+  deleteProject: async (projectPath: string) => {
+    try {
+      await deleteNovelProject(projectPath);
+      const remaining = await get().loadProjects();
+      const currentVault = get().vaultPath;
+      if (currentVault === projectPath) {
+        if (remaining.length > 0) {
+          await get().setVaultPath(remaining[0].path);
+        } else {
+          set({ vaultPath: null, files: [], activeFilePath: null });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to delete novel project:', e);
+    }
+  },
+
+  importProject: async (folderPath: string) => {
+    set({ isLoading: true });
+    try {
+      const proj = await importNovelProject(folderPath);
+      await get().loadProjects();
+      await get().setVaultPath(proj.path);
+      set({ isBookshelfOpen: false, isLoading: false });
+      return proj;
+    } catch (e) {
+      console.error('Failed to import novel project:', e);
+      set({ isLoading: false });
+      return null;
+    }
+  },
+
+  switchProject: async (projectPath: string) => {
+    await get().setVaultPath(projectPath);
+    set({ isBookshelfOpen: false });
+  },
 
   setVaultPath: async (path: string) => {
     set({ vaultPath: path, isLoading: true });
@@ -790,20 +877,25 @@ export const useExportStore = create<ExportState>((set, get) => ({
   },
 }));
 
-// Auto-Sync Store (Phase 7 Zero-Touch Cloud Sync)
+// Auto-Sync Store (Phase 7 Zero-Touch Cloud Sync & Phase 13 Cloud Direct Connect)
 interface SyncState {
   status: SyncStatus | null;
   config: SyncConfig | null;
+  cloudDetections: CloudStorageDetections | null;
   isLoading: boolean;
   loadStatus: (vaultPath: string) => Promise<void>;
   loadConfig: (vaultPath: string) => Promise<void>;
+  loadCloudDetections: (vaultPath?: string) => Promise<CloudStorageDetections | null>;
+  connectCloud: (vaultPath: string, storageType: string) => Promise<void>;
+  connectGh: (vaultPath: string) => Promise<void>;
   saveConfig: (vaultPath: string, config: SyncConfig) => Promise<void>;
   triggerSync: (vaultPath: string, reason: string) => Promise<void>;
 }
 
-export const useSyncStore = create<SyncState>((set) => ({
+export const useSyncStore = create<SyncState>((set, get) => ({
   status: null,
   config: null,
+  cloudDetections: null,
   isLoading: false,
 
   loadStatus: async (vaultPath: string) => {
@@ -824,12 +916,52 @@ export const useSyncStore = create<SyncState>((set) => ({
     }
   },
 
+  loadCloudDetections: async (vaultPath?: string) => {
+    try {
+      const detections = await getCloudStorageDetections(vaultPath);
+      set({ cloudDetections: detections });
+      return detections;
+    } catch (e) {
+      console.error('Failed to get cloud storage detections:', e);
+      return null;
+    }
+  },
+
+  connectCloud: async (vaultPath: string, storageType: string) => {
+    set({ isLoading: true });
+    try {
+      const config = await connectCloudStorage(vaultPath, storageType);
+      set({ config });
+      await get().loadStatus(vaultPath);
+      await get().loadCloudDetections(vaultPath);
+      set({ isLoading: false });
+    } catch (e) {
+      console.error('Failed to connect cloud storage:', e);
+      set({ isLoading: false });
+    }
+  },
+
+  connectGh: async (vaultPath: string) => {
+    set({ isLoading: true });
+    try {
+      const config = await connectGithubCli(vaultPath);
+      set({ config });
+      await get().loadStatus(vaultPath);
+      await get().loadCloudDetections(vaultPath);
+      set({ isLoading: false });
+    } catch (e) {
+      console.error('Failed to connect GitHub CLI:', e);
+      set({ isLoading: false });
+    }
+  },
+
   saveConfig: async (vaultPath: string, config: SyncConfig) => {
     try {
       await saveSyncConfig(vaultPath, config);
       set({ config });
       const status = await triggerAutoSync(vaultPath, '同期設定の更新');
       set({ status });
+      await get().loadCloudDetections(vaultPath);
     } catch (e) {
       console.error('Failed to save sync config:', e);
     }
@@ -843,6 +975,49 @@ export const useSyncStore = create<SyncState>((set) => ({
     } catch (e) {
       console.error('Failed to trigger sync:', e);
       set({ isLoading: false });
+    }
+  },
+}));
+
+// Phase 13 AI Service Detection & Fast Testing Store
+interface AiServiceState {
+  services: DetectedAiServices | null;
+  isLoading: boolean;
+  isTesting: boolean;
+  testResult: string | null;
+  detectServices: () => Promise<DetectedAiServices | null>;
+  testConnection: (config: AiConfig) => Promise<string>;
+}
+
+export const useAiServiceStore = create<AiServiceState>((set) => ({
+  services: null,
+  isLoading: false,
+  isTesting: false,
+  testResult: null,
+
+  detectServices: async () => {
+    set({ isLoading: true });
+    try {
+      const services = await detectAiServices();
+      set({ services, isLoading: false });
+      return services;
+    } catch (e) {
+      console.error('Failed to detect AI services:', e);
+      set({ isLoading: false });
+      return null;
+    }
+  },
+
+  testConnection: async (config: AiConfig) => {
+    set({ isTesting: true, testResult: null });
+    try {
+      const result = await testAiConnection(config);
+      set({ testResult: result, isTesting: false });
+      return result;
+    } catch (e: any) {
+      const errMsg = `❌ 接続失敗: ${e?.message || e || 'タイムアウトまたは設定エラー'}`;
+      set({ testResult: errMsg, isTesting: false });
+      return errMsg;
     }
   },
 }));
